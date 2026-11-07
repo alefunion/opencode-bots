@@ -92,6 +92,8 @@ type StoredBot = {
   role: string
   sessionID: string
   memory: StoredMemory[]
+  /** When the role last changed after creation; drives the mid-conversation notice. */
+  roleChangedAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -375,6 +377,7 @@ const storedBot = (raw: Record<string, unknown>): StoredBot => {
     role: cleanRole(raw.role),
     sessionID: typeof raw.sessionID === "string" ? raw.sessionID : "",
     memory: cleanMemory(raw.memory),
+    ...(typeof raw.roleChangedAt === "number" ? { roleChangedAt: raw.roleChangedAt } : {}),
     createdAt: created,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : created,
   }
@@ -411,7 +414,7 @@ const memorySection = (bot: StoredBot, owner: string) => [
 // `execute` tool's catalog (for example `tools.memory`). Bots that are only told
 // "call bots_memory" look for a direct tool, find none, and give up.
 const TOOL_NOTE = [
-  "Bot tools: bots_send, bots_memory, bots_skill, bots_command, and bots_create (coordinator only).",
+  "Bot tools: bots_send, bots_memory, bots_role, bots_skill, bots_command, and bots_create (coordinator only).",
   "If they are not listed as direct tools, they are in the execute tool's catalog (for example `await tools.memory({...})` inside execute). Search the catalog for them before concluding a tool is missing.",
 ]
 
@@ -1077,7 +1080,11 @@ export default Plugin.define({
         bot.handle = uniqueHandle(slugify(bot.name), bot.id)
       }
       if (patch.color !== undefined) bot.color = cleanColor(patch.color)
-      if (patch.role !== undefined) bot.role = cleanRole(patch.role)
+      if (patch.role !== undefined) {
+        const role = cleanRole(patch.role)
+        if (role !== bot.role) bot.roleChangedAt = Date.now()
+        bot.role = role
+      }
       if (patch.memory !== undefined) bot.memory = cleanMemory(patch.memory)
       bot.updatedAt = Date.now()
     }
@@ -1204,12 +1211,37 @@ export default Plugin.define({
       ].join("\n")
     }
 
+    /**
+     * The system prompt carries the current role on every step, but models trust
+     * their own earlier replies over a system prompt that changed silently. When
+     * the history predates the latest role change, the end of the request
+     * repeats the role and marks the older turns as stale. Nothing is persisted.
+     */
+    const roleNotice = async (sessionID: string, bot: StoredBot) => {
+      if (!bot.roleChangedAt) return ""
+      const history = await ctx.session.context({ sessionID })
+      const first = history[0]
+      if (!first || first.time.created >= bot.roleChangedAt) return ""
+      return [
+        "Your role was changed during this conversation. Your current role is:",
+        "",
+        bot.role.trim() || "Be a helpful, concise assistant.",
+        "",
+        "Earlier messages, tool results, and your own past replies may reflect the previous role. Follow the current role.",
+      ].join("\n")
+    }
+
     const contextHook = await ctx.session.hook("context", async (event) => {
       await refreshStore()
       const { bot, group, source } = sourceFor(event.sessionID)
       if (bot) event.system.push({ type: "text", text: buildSystemPrompt(bot) })
       if (group && source)
         event.system.push({ type: "text", text: buildGroupPrompt(group, source) })
+      if (source) {
+        const notice = await roleNotice(event.sessionID, source)
+        if (notice)
+          event.messages.push({ role: "system", content: [{ type: "text", text: notice }] })
+      }
 
       // Library skills are visible only to the bots they are scoped to.
       const allowed = source ? skillsFor(source.id) : []
@@ -1225,7 +1257,7 @@ export default Plugin.define({
       // a session that is not a bot or group, and bots_create a non-coordinator.
       if (!source || source.id !== store.coordinatorID) delete event.tools.bots_create
       if (bot || group) return
-      for (const name of ["bots_send", "bots_skill", "bots_memory", "bots_command"]) {
+      for (const name of ["bots_send", "bots_skill", "bots_memory", "bots_role", "bots_command"]) {
         delete event.tools[name]
       }
     })
@@ -1522,6 +1554,20 @@ export default Plugin.define({
       const saved = existing ?? source.memory.at(-1)!
       return {
         content: `${existing ? "Updated" : "Saved"} memory "${saved.title}" (id ${saved.id}). It will be available in the next model step.`,
+      }
+    }
+
+    const setBotRole = async (source: StoredBot, input: unknown) => {
+      const role = cleanRole((input as { role?: unknown }).role).trim()
+      if (!role) return { content: "Error: role is required. Pass the complete new role." }
+      const previous = source.role
+      source.role = role
+      source.roleChangedAt = source.updatedAt = Date.now()
+      await save()
+      await emitChanged(source.id)
+      // The previous text lets the bot undo a mistaken edit in the same session.
+      return {
+        content: `Updated your role. It takes effect in the next model step.\n\nPrevious role:\n${previous.trim() || "(empty)"}`,
       }
     }
 
@@ -1845,6 +1891,27 @@ export default Plugin.define({
           if (!source)
             return { content: "Error: bots_memory is only available in a bot or group session." }
           return manageBotMemory(source, input)
+        },
+      })
+
+      editor.add({
+        name: "role",
+        description:
+          "Replace your own role: the standing instructions that define who you are and how you behave. Use this when the user asks you to change your role, personality, focus, or standing instructions. Pass the complete new role, not a diff; start from your current role and keep what should stay. Use memory for facts, not this tool.",
+        input: {
+          type: "object",
+          properties: {
+            role: { type: "string", description: "The complete new role text." },
+          },
+          required: ["role"],
+          additionalProperties: false,
+        },
+        execute: async (input, context) => {
+          await refreshStore()
+          const { source } = sourceFor(context.sessionID)
+          if (!source)
+            return { content: "Error: bots_role is only available in a bot or group session." }
+          return setBotRole(source, input)
         },
       })
 

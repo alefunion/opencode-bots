@@ -72,6 +72,9 @@ also open them in Desktop.
 - **Memory.** Private to each bot and injected into its prompt. Edit it in
   **Settings**, or ask the bot to remember or forget something (`bots_memory`).
   Capped at 50 entries and 40,000 characters.
+- **Role.** The bot's standing instructions. Edit it in **Settings**, or ask the
+  bot to change its own role (`bots_role`). A bot can only change its own role,
+  and the new role applies from its next model step.
 - **Coordinator.** Only the coordinator bot can create bots (`bots_create`).
   Choose it in **Settings → Bots**; deleting it clears the setting.
 - **Deleting a bot** deletes its OpenCode session, like deleting it in Desktop.
