@@ -1,0 +1,64 @@
+# Architecture and security
+
+How Bots for OpenCode runs, and how it keeps your machine private.
+
+## How it runs
+
+```text
+Phone / browser
+  │  https://bots.<hostname>   (OpenTunnel)
+  ▼
+Web app  127.0.0.1:49384       prebuilt; serves the UI, proxies /api, sends Web Push
+  │
+  ▼
+OpenCode background service    the one Desktop uses
+  ├─ plugin, every location:   keeps one web app process running
+  ├─ plugin, bot workspace:    bot tools, persona and memory, library, RPC
+  └─ Desktop GUI:              Settings → Bots
+```
+
+The web app ships prebuilt and runs on the Bun runtime inside OpenCode, so there
+is nothing else to install. It is a child of the OpenCode service and is
+restarted within seconds if it exits. It finds the service on its own and needs
+no password. Plugin instances in other locations do nothing else, so classic
+sessions get no bot persona.
+
+The tunnel reuses the OpenTunnel identity OpenCode itself pairs with (profile
+`default`) and claims its own `bots` route, so the address is stable across
+restarts. If the profile has no identity yet, the first connect creates one
+(`tunnel.ensure`), so nobody has to run `opencode pair --remote` first. OpenCode
+then uses the same identity if remote pairing is turned on later.
+
+Requirements: OpenCode Desktop 2.2 or later on macOS or Linux (Windows is not
+supported), and port `49384` free on `127.0.0.1`.
+
+## Source layout
+
+```text
+plugin/src/index.ts     server plugin: store, hooks, bots_* tools, RPC
+plugin/src/rpc.ts       RPC contract shared with the web app and Desktop page
+plugin/src/webhost.ts   runs the web app on OpenCode's Bun runtime
+plugin/src/gui.tsx      Desktop Settings → Bots page
+web/src/index.ts        web app server: pairing, proxy, push, tunnel
+web/src/remote.ts       tunnel connection and pairing cookies
+web/src/App.tsx         React app
+web/src/sw.js           service worker (push, notification clicks)
+```
+
+## Security
+
+- The web app listens on `127.0.0.1` only; remote access is through OpenTunnel.
+- Every request needs a pairing cookie, loopback included: the tunnel forwards
+  the visitor's `Host` header, so a local-looking request proves nothing.
+- Pairing uses OpenCode's single-use codes. The app checks a code with OpenCode
+  and issues its own signed cookie (`HttpOnly`, `SameSite=Strict`, `Secure`,
+  400 days); OpenCode's session cookie never reaches the browser.
+- Cross-origin writes are rejected.
+- The plugin's notify requests are authorized by a 256-bit internal secret in
+  `push.json` (mode `0600`), not by a local-only check.
+- `bots.json` holds roles and memory, not provider credentials.
+
+> [!WARNING]
+> A paired device has full use of your OpenCode service, as Desktop does:
+> sessions, tools, and shell. Pair only devices you control, and use **Sign out
+> all devices** if one is lost.
