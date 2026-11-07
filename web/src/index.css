@@ -866,6 +866,10 @@ select {
   font-size: 0.88em;
 }
 
+.user-bubble .message-text code {
+  background: var(--panel-strong);
+}
+
 .message-text pre {
   margin: 0.6em 0;
   padding: 10px 12px;
@@ -901,7 +905,10 @@ select {
 }
 
 .message-text table {
-  width: 100%;
+  display: block;
+  max-width: 100%;
+  margin: 0.6em 0;
+  overflow-x: auto;
   border-collapse: collapse;
   font-size: 12px;
 }
@@ -911,6 +918,16 @@ select {
   padding: 5px 8px;
   border: 1px solid var(--border);
   text-align: left;
+  overflow-wrap: normal;
+}
+
+.message-text li.task-list-item {
+  list-style: none;
+}
+
+.message-text li.task-list-item input {
+  margin: 0 6px 0 -1.2em;
+  vertical-align: -1px;
 }
 
 .message-text th {
