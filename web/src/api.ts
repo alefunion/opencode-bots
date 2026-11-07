@@ -54,6 +54,26 @@ async function rpc<T>(method: string, input: unknown): Promise<T> {
   return body.output as T
 }
 
+/**
+ * `updateLibrary` validates each skill with `additionalProperties: false`, and the
+ * server owns createdAt, uses, and lastUsedAt. Send only the fields the schema
+ * accepts, picking them explicitly so nothing new leaks into the payload.
+ */
+const skillInput = (skill: BotSkill) => ({
+  id: skill.id,
+  name: skill.name,
+  description: skill.description,
+  content: skill.content,
+  autoinvoke: skill.autoinvoke,
+  scope: skill.scope,
+  botIDs: skill.botIDs,
+  files: skill.files,
+  status: skill.status,
+  pinned: skill.pinned,
+  author: skill.author,
+  evidence: skill.evidence,
+})
+
 export const botsApi = {
   state: () => rpc<BotsState>("list", {}),
   models: () => rpc<{ models: ModelOption[] }>("models", {}),
@@ -89,7 +109,7 @@ export const botsApi = {
   updateSettings: (model: ModelRef | null) => rpc<BotsState>("updateSettings", { model }),
   updateCoordinator: (id: string) => rpc<BotsState>("updateCoordinator", { id }),
   updateLibrary: (commands: BotCommand[], skills: BotSkill[]) =>
-    rpc<BotsState>("updateLibrary", { commands, skills }),
+    rpc<BotsState>("updateLibrary", { commands, skills: skills.map(skillInput) }),
   readSkillFile: (skillID: string, path: string) =>
     rpc<SkillFileContent>("readSkillFile", { skillID, path }),
   writeSkillFile: (
@@ -203,12 +223,15 @@ type ToolPart = {
   time?: { created?: number; ran?: number; completed?: number }
 }
 
+/** bots_send, as Code Mode records it: bare in older sessions, namespaced since. */
+const isSend = (tool: unknown) => tool === "send" || tool === "bots_send" || tool === "bots.send"
+
 function sendTargets(state: ToolState): Set<string> {
   const targets = new Set<string>()
   const calls = state.metadata?.toolCalls
   if (!Array.isArray(calls)) return targets
   for (const call of calls) {
-    if (!call || call.tool !== "send") continue
+    if (!call || !isSend(call.tool)) continue
     if (call.status && call.status !== "completed") continue
     const target = call.input?.target
     if (typeof target === "string" && target.trim()) {
@@ -294,7 +317,7 @@ function toMessages(messages: readonly SessionMessageInfo[]): UiMessage[] {
       const relevant = targets.size ? replies.filter((reply) => targets.has(reply.handle)) : replies
       const calls = state.metadata?.toolCalls ?? []
       const allSend =
-        calls.length > 0 ? calls.every((call) => call?.tool === "send") : relevant.length > 0
+        calls.length > 0 ? calls.every((call) => isSend(call?.tool)) : relevant.length > 0
 
       if (relevant.length > 0) {
         const time =

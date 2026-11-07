@@ -14,6 +14,8 @@ export type MemoryEntry = {
 
 export type LibraryScope = "all" | "selected"
 
+export type SkillStatus = "active" | "draft" | "archived"
+
 export type CommandView = {
   readonly id: string
   readonly name: string
@@ -45,6 +47,13 @@ export type SkillView = {
   readonly scope: LibraryScope
   readonly botIDs: readonly string[]
   readonly files: readonly SkillFileView[]
+  readonly status: SkillStatus
+  readonly pinned: boolean
+  readonly author: string
+  readonly evidence: string
+  readonly createdAt: number
+  readonly uses: number
+  readonly lastUsedAt: number
 }
 
 export type SkillInput = {
@@ -56,6 +65,10 @@ export type SkillInput = {
   readonly scope: LibraryScope
   readonly botIDs: readonly string[]
   readonly files?: readonly SkillFileView[]
+  readonly status?: SkillStatus
+  readonly pinned?: boolean
+  readonly author?: string
+  readonly evidence?: string
 }
 
 export type BotView = {
@@ -264,6 +277,11 @@ const libraryScope = {
   enum: ["all", "selected"],
 } as const
 
+const skillStatus = {
+  type: "string",
+  enum: ["active", "draft", "archived"],
+} as const
+
 const command = {
   type: "object",
   properties: {
@@ -313,6 +331,48 @@ const skill = {
     scope: libraryScope,
     botIDs: { type: "array", items: { type: "string" } },
     files: { type: "array", items: skillFile },
+    status: skillStatus,
+    pinned: { type: "boolean" },
+    author: { type: "string" },
+    evidence: { type: "string" },
+    createdAt: { type: "number" },
+    uses: { type: "number" },
+    lastUsedAt: { type: "number" },
+  },
+  required: [
+    "id",
+    "name",
+    "description",
+    "content",
+    "autoinvoke",
+    "scope",
+    "botIDs",
+    "status",
+    "pinned",
+    "author",
+    "evidence",
+    "createdAt",
+    "uses",
+    "lastUsedAt",
+  ],
+  additionalProperties: false,
+} as const
+
+const skillInput = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    name: { type: "string" },
+    description: { type: "string" },
+    content: { type: "string" },
+    autoinvoke: { type: "boolean" },
+    scope: libraryScope,
+    botIDs: { type: "array", items: { type: "string" } },
+    files: { type: "array", items: skillFile },
+    status: skillStatus,
+    pinned: { type: "boolean" },
+    author: { type: "string" },
+    evidence: { type: "string" },
   },
   required: ["id", "name", "description", "content", "autoinvoke", "scope", "botIDs"],
   additionalProperties: false,
@@ -450,7 +510,7 @@ export const BotsRpc = Rpc.define({
         type: "object",
         properties: {
           commands: { type: "array", items: commandInput },
-          skills: { type: "array", items: skill },
+          skills: { type: "array", items: skillInput },
         },
         required: ["commands", "skills"],
         additionalProperties: false,

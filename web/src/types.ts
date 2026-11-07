@@ -41,6 +41,13 @@ export type BotSkill = {
   scope: LibraryScope
   botIDs: string[]
   files: SkillFile[]
+  status: "active" | "draft" | "archived"
+  pinned: boolean
+  author: string
+  evidence: string
+  createdAt: number
+  uses: number
+  lastUsedAt: number
 }
 
 export type RemoteStatus = "connecting" | "connected" | "error"

@@ -89,6 +89,7 @@ export function Settings({
   const currentProviderLabel = state.model
     ? (currentModel?.providerName ?? currentModel?.providerID ?? state.model.providerID)
     : null
+  const draftCount = skills.filter((skill) => (skill.status ?? "active") === "draft").length
 
   const modelGroups = useMemo(() => {
     const query = modelQuery.trim().toLowerCase()
@@ -267,6 +268,14 @@ export function Settings({
             onClick={() => setTab("skills")}
           >
             Skills <span>{skills.length}</span>
+            {draftCount > 0 ? (
+              <span
+                className="library-tab-badge"
+                title={`${draftCount} proposed skill${draftCount === 1 ? "" : "s"} waiting for review`}
+              >
+                {draftCount} new
+              </span>
+            ) : null}
           </button>
           <button
             className={`library-tab${tab === "remote" ? " active" : ""}`}

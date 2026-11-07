@@ -28,6 +28,13 @@ const newSkill = (skills: BotSkill[]): BotSkill => ({
   scope: "all",
   botIDs: [],
   files: [],
+  status: "active",
+  pinned: false,
+  author: "",
+  evidence: "",
+  createdAt: Date.now(),
+  uses: 0,
+  lastUsedAt: 0,
 })
 
 export function CommandsEditor({
@@ -118,6 +125,34 @@ export function CommandsEditor({
   )
 }
 
+const skillStatus = (skill: BotSkill) => skill.status ?? "active"
+
+const dateLabel = (time: number) => {
+  const date = new Date(time)
+  const elapsed = Date.now() - time
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (elapsed < minute) return "just now"
+  if (elapsed < hour) return `${Math.floor(elapsed / minute)}m ago`
+  if (elapsed < day) return `${Math.floor(elapsed / hour)}h ago`
+  if (elapsed < 7 * day) return `${Math.floor(elapsed / day)}d ago`
+  const sameYear = date.getFullYear() === new Date().getFullYear()
+  return date.toLocaleDateString(
+    undefined,
+    sameYear
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" },
+  )
+}
+
+const usageLabel = (skill: BotSkill) => {
+  const uses = skill.uses ?? 0
+  if (uses === 0 || !skill.lastUsedAt) return "Never used"
+  const times = uses === 1 ? "1 time" : `${uses} times`
+  return `Used ${times} · last used ${dateLabel(skill.lastUsedAt)}`
+}
+
 export function SkillsEditor({
   bots,
   skills,
@@ -129,9 +164,23 @@ export function SkillsEditor({
   savedIDs: Set<string>
   onChange: (skills: BotSkill[]) => void
 }) {
+  const [showArchived, setShowArchived] = useState(false)
+
   // By position: the ID is one of the fields being edited, so it cannot be the key.
   const patch = (index: number, value: Partial<BotSkill>) =>
     onChange(skills.map((item, at) => (at === index ? { ...item, ...value } : item)))
+
+  const cardKey = (skill: BotSkill, index: number) =>
+    savedIDs.has(skill.id) ? `saved:${skill.id}` : `new:${index}`
+  const entries = skills.map((skill, index) => ({ skill, index }))
+  const drafts = entries.filter(({ skill }) => skillStatus(skill) === "draft")
+  const active = entries.filter(({ skill }) => skillStatus(skill) === "active")
+  const archived = entries.filter(({ skill }) => skillStatus(skill) === "archived")
+  const botName = (id: string) => bots.find((bot) => bot.id === id)?.name
+  const meta = (skill: BotSkill) =>
+    [skill.author ? `Created by ${botName(skill.author) ?? "Unknown bot"}` : "", usageLabel(skill)]
+      .filter(Boolean)
+      .join(" · ")
 
   return (
     <>
@@ -156,89 +205,213 @@ export function SkillsEditor({
           <p className="hint">Add reusable instructions that only bot sessions can use.</p>
         </div>
       ) : (
-        skills.map((skill, index) => {
-          const saved = savedIDs.has(skill.id)
-          return (
-            // Saved IDs are read-only, so they are stable keys; unsaved cards use
-            // their position.
-            <div className="library-card" key={saved ? `saved:${skill.id}` : `new:${index}`}>
-              <div className="library-card-head">
-                <span className="command-preview">{skill.id || "skill"}</span>
-                <button
-                  className="icon-button"
-                  aria-label={`Delete ${skill.id}`}
-                  onClick={() => onChange(skills.filter((_, at) => at !== index))}
-                >
-                  <Icon name="trash" size={15} />
-                </button>
+        <>
+          {drafts.length > 0 ? (
+            <section className="library-group">
+              <div className="library-group-title">
+                <span>Proposed by bots</span>
+                <span className="library-group-count">{drafts.length}</span>
               </div>
+              {drafts.map(({ skill, index }) => {
+                const author = skill.author
+                  ? bots.find((bot) => bot.id === skill.author)
+                  : undefined
+                const content = skill.content || "No instructions provided."
+                const evidence = skill.evidence || "No evidence recorded."
+                return (
+                  <div className="library-card skill-draft" key={cardKey(skill, index)}>
+                    <div className="library-card-head">
+                      <div className="skill-draft-author">
+                        {author ? (
+                          <Avatar name={author.name} color={author.color} size={18} />
+                        ) : (
+                          <Icon name="bot" size={15} />
+                        )}
+                        <span>
+                          Proposed by <strong>{author?.name ?? "Unknown bot"}</strong>
+                        </span>
+                      </div>
+                      <div className="skill-draft-actions">
+                        <button
+                          className="primary-button"
+                          aria-label={`Approve ${skill.name || skill.id}`}
+                          onClick={() => patch(index, { status: "active" })}
+                        >
+                          <Icon name="check" size={14} /> Approve
+                        </button>
+                        <button
+                          className="danger-button"
+                          aria-label={`Discard ${skill.name || skill.id}`}
+                          onClick={() => onChange(skills.filter((_, at) => at !== index))}
+                        >
+                          <Icon name="trash" size={14} /> Discard
+                        </button>
+                      </div>
+                    </div>
 
-              <div className="field-grid">
+                    <div className="skill-draft-summary">
+                      <span className="command-preview">{skill.id || "skill"}</span>
+                      <span className="skill-draft-name">{skill.name || "Untitled skill"}</span>
+                    </div>
+                    <p className="skill-draft-description">
+                      {skill.description || "No description provided."}
+                    </p>
+
+                    <div className="skill-evidence">
+                      <span>Evidence</span>
+                      <p>{evidence}</p>
+                    </div>
+
+                    <div className="skill-draft-content-wrap">
+                      <span>Instructions</span>
+                      <pre className="skill-draft-content">{content}</pre>
+                    </div>
+                  </div>
+                )
+              })}
+            </section>
+          ) : null}
+
+          {active.map(({ skill, index }) => {
+            const saved = savedIDs.has(skill.id)
+            return (
+              // Saved IDs are read-only, so they are stable keys; unsaved cards use
+              // their position.
+              <div className="library-card" key={cardKey(skill, index)}>
+                <div className="library-card-head">
+                  <span className="command-preview">{skill.id || "skill"}</span>
+                  <button
+                    className="icon-button"
+                    aria-label={`Delete ${skill.id}`}
+                    onClick={() => onChange(skills.filter((_, at) => at !== index))}
+                  >
+                    <Icon name="trash" size={15} />
+                  </button>
+                </div>
+
+                <p className="skill-meta">{meta(skill)}</p>
+
+                <div className="field-grid">
+                  <label className="field">
+                    <span>Skill ID{saved ? " (permanent)" : ""}</span>
+                    <input
+                      value={skill.id}
+                      placeholder="release-check"
+                      readOnly={saved}
+                      title={
+                        saved ? "The skill ID is permanent after the library is saved." : undefined
+                      }
+                      onChange={(event) => patch(index, { id: event.currentTarget.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Display name</span>
+                    <input
+                      value={skill.name}
+                      placeholder="Release check"
+                      onChange={(event) => patch(index, { name: event.currentTarget.value })}
+                    />
+                  </label>
+                </div>
+
                 <label className="field">
-                  <span>Skill ID{saved ? " (permanent)" : ""}</span>
+                  <span>Description</span>
                   <input
-                    value={skill.id}
-                    placeholder="release-check"
-                    readOnly={saved}
-                    title={
-                      saved ? "The skill ID is permanent after the library is saved." : undefined
-                    }
-                    onChange={(event) => patch(index, { id: event.currentTarget.value })}
+                    value={skill.description}
+                    placeholder="Use when preparing or checking a release"
+                    onChange={(event) => patch(index, { description: event.currentTarget.value })}
                   />
                 </label>
+
                 <label className="field">
-                  <span>Display name</span>
-                  <input
-                    value={skill.name}
-                    placeholder="Release check"
-                    onChange={(event) => patch(index, { name: event.currentTarget.value })}
+                  <span>Instructions</span>
+                  <textarea
+                    rows={6}
+                    value={skill.content}
+                    placeholder="Write the workflow the bot should follow. Supporting files live beside SKILL.md and are visible to the model when it loads the skill."
+                    onChange={(event) => patch(index, { content: event.currentTarget.value })}
                   />
                 </label>
+
+                <SupportingFiles
+                  skill={skill}
+                  saved={saved}
+                  onFiles={(files) => patch(index, { files })}
+                />
+
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={skill.autoinvoke}
+                    onChange={(event) => patch(index, { autoinvoke: event.currentTarget.checked })}
+                  />
+                  Let bots discover this skill from its description
+                </label>
+
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={skill.pinned ?? false}
+                    onChange={(event) => patch(index, { pinned: event.currentTarget.checked })}
+                  />
+                  Pinned — bots can't change or delete it
+                </label>
+
+                <ScopePicker
+                  bots={bots}
+                  scope={skill.scope}
+                  botIDs={skill.botIDs}
+                  onChange={(scope, botIDs) => patch(index, { scope, botIDs })}
+                />
               </div>
+            )
+          })}
 
-              <label className="field">
-                <span>Description</span>
-                <input
-                  value={skill.description}
-                  placeholder="Use when preparing or checking a release"
-                  onChange={(event) => patch(index, { description: event.currentTarget.value })}
-                />
-              </label>
-
-              <label className="field">
-                <span>Instructions</span>
-                <textarea
-                  rows={6}
-                  value={skill.content}
-                  placeholder="Write the workflow the bot should follow. Supporting files live beside SKILL.md and are visible to the model when it loads the skill."
-                  onChange={(event) => patch(index, { content: event.currentTarget.value })}
-                />
-              </label>
-
-              <SupportingFiles
-                skill={skill}
-                saved={saved}
-                onFiles={(files) => patch(index, { files })}
-              />
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={skill.autoinvoke}
-                  onChange={(event) => patch(index, { autoinvoke: event.currentTarget.checked })}
-                />
-                Let bots discover this skill from its description
-              </label>
-
-              <ScopePicker
-                bots={bots}
-                scope={skill.scope}
-                botIDs={skill.botIDs}
-                onChange={(scope, botIDs) => patch(index, { scope, botIDs })}
-              />
-            </div>
-          )
-        })
+          {archived.length > 0 ? (
+            <section className="library-group library-archived">
+              <button
+                className="library-group-head"
+                aria-expanded={showArchived}
+                onClick={() => setShowArchived((value) => !value)}
+              >
+                <span>Archived</span>
+                <span className="library-group-count">{archived.length}</span>
+                <span className="library-group-toggle">{showArchived ? "Hide" : "Show"}</span>
+              </button>
+              {showArchived ? (
+                <div className="library-archived-list">
+                  {archived.map(({ skill, index }) => (
+                    <div className="library-archived-row" key={cardKey(skill, index)}>
+                      <div className="library-archived-info">
+                        <div className="library-archived-title">
+                          <span className="command-preview">{skill.id || "skill"}</span>
+                          <span className="library-archived-name">
+                            {skill.name || "Untitled skill"}
+                          </span>
+                        </div>
+                        <span className="skill-meta">{meta(skill)}</span>
+                      </div>
+                      <button
+                        className="secondary-button"
+                        aria-label={`Restore ${skill.name || skill.id}`}
+                        onClick={() => patch(index, { status: "active" })}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label={`Delete ${skill.id}`}
+                        onClick={() => onChange(skills.filter((_, at) => at !== index))}
+                      >
+                        <Icon name="trash" size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+        </>
       )}
     </>
   )

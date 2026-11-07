@@ -71,10 +71,13 @@ also open them in Desktop.
   message.
 - **Memory.** Private to each bot and injected into its prompt. Edit it in
   **Settings**, or ask the bot to remember or forget something (`bots_memory`).
-  Capped at 50 entries and 40,000 characters.
+  Bots save only facts and durable preferences you actually stated, never their
+  own guesses or inferences, and update an entry instead of adding a
+  near-duplicate. Capped at 50 entries and 40,000 characters.
 - **Role.** The bot's standing instructions. Edit it in **Settings**, or ask the
-  bot to change its own role (`bots_role`). A bot can only change its own role,
-  and the new role applies from its next model step.
+  bot to change its own role (`bots_role`). Bots change it only when you ask,
+  never on their own initiative. A bot can only change its own role, and the new
+  role applies from its next model step.
 - **Coordinator.** Only the coordinator bot can create bots (`bots_create`).
   Choose it in **Settings → Bots**; deleting it clears the setting.
 - **Deleting a bot** deletes its OpenCode session, like deleting it in Desktop.
@@ -107,6 +110,18 @@ Manage both in the app's **Settings**, or ask a bot to create them.
 - **Scope.** Each item is available to **All bots** or **Selected bots**. Items a
   bot creates are scoped to that bot, but any bot can edit or delete any library
   item, shared ones included.
+- **Draft proposals.** After a task whose success something outside the bot
+  confirmed (tests passed, you confirmed it worked), a bot can propose a skill
+  with `bots_skill` action `propose` and the evidence. Proposals arrive in
+  **Settings → Skills** as drafts and are not usable until you approve them.
+  Bots prefer a minimal `patch` to an existing skill over rewriting it, and
+  `save` only when you ask for a new or changed skill.
+- **Pinning.** Pin a skill in **Settings** to lock it: bots can no longer save,
+  patch, delete, or edit its files. Unpin it to hand it back to them.
+- **Usage and archiving.** **Settings → Skills** shows how often each skill was
+  loaded and when. Bot-authored, unpinned skills unused for 60 days are archived
+  automatically; archived skills stay in the Library and can be restored, but
+  bots cannot load them. Skills you create and pinned skills are never archived.
 - Library items exist only in bot and group sessions. Classic OpenCode sessions
   never see them, and bots still have every global OpenCode skill.
 

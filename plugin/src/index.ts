@@ -34,6 +34,7 @@ import {
   type SkillFileContent,
   type SkillFileView,
   type SkillInput,
+  type SkillStatus,
   type SkillView,
 } from "./rpc"
 
@@ -71,7 +72,11 @@ const MAX_MEMORY_TOTAL = 40_000
 const MAX_COMMAND_NAME = 32
 const MAX_SKILL_ID = 64
 const MAX_LIBRARY_DESCRIPTION = 2_000
+const MAX_SKILL_EVIDENCE = 500
+const MAX_PENDING_DRAFTS = 10
 const MAX_COMMAND_TEMPLATE = 20_000
+const STALE_SKILL_MS = 60 * 24 * 60 * 60 * 1000
+const SKILL_SWEEP_MS = 6 * 60 * 60 * 1000
 const MAX_SKILL_CONTENT = 100_000
 const MAX_SKILL_FILE_BYTES = 4 * 1024 * 1024
 const MAX_SKILL_FILES = 200
@@ -126,6 +131,16 @@ type StoredSkill = {
   autoinvoke: boolean
   scope: LibraryScope
   botIDs: string[]
+  status: SkillStatus
+  pinned: boolean
+  /** The bot that created the skill, or "" when the user created it in the Library. */
+  author: string
+  /** For bot proposals: what confirmed the approach worked. */
+  evidence: string
+  createdAt: number
+  uses: number
+  /** When a bot last loaded the skill; 0 means never. */
+  lastUsedAt: number
 }
 
 type Store = {
@@ -234,6 +249,12 @@ const cleanSkillID = (value: unknown) => {
 const cleanLibraryText = (value: unknown, max: number) =>
   typeof value === "string" ? value.trim().slice(0, max) : ""
 
+const cleanSkillStatus = (value: unknown): SkillStatus =>
+  value === "draft" || value === "archived" ? value : "active"
+
+const cleanCount = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
+
 const cleanBotIDs = (value: unknown, scope: LibraryScope, valid: (id: string) => boolean) => {
   if (scope === "all" || !Array.isArray(value)) return []
   return [...new Set(value.filter((id): id is string => typeof id === "string" && valid(id)))]
@@ -286,6 +307,13 @@ const cleanSkills = (value: unknown, validBot: (id: string) => boolean): StoredS
       autoinvoke: record.autoinvoke !== false,
       scope,
       botIDs: cleanBotIDs(record.botIDs, scope, validBot),
+      status: cleanSkillStatus(record.status),
+      pinned: record.pinned === true,
+      author: cleanLibraryText(record.author, MAX_SKILL_ID),
+      evidence: cleanLibraryText(record.evidence, MAX_SKILL_EVIDENCE),
+      createdAt: cleanCount(record.createdAt) || Date.now(),
+      uses: cleanCount(record.uses),
+      lastUsedAt: cleanCount(record.lastUsedAt),
     })
   }
   return output
@@ -407,20 +435,28 @@ const memorySection = (bot: StoredBot, owner: string) => [
     ? bot.memory.map((entry) => `- [${entry.id}] ${entry.title}: ${entry.content}`).join("\n")
     : "- No memory entries yet.",
   "",
-  `Manage this memory with the bots_memory tool. Use action "save" with title/content to add or update an entry, or action "delete" with the entry's id to forget it. Memory is private to ${owner}.`,
+  `Manage this memory with the bots_memory tool. Save only facts and durable preferences the user actually stated; never save your own guesses, inferences about the user, or lessons you judged yourself. Keep entries short, and update an existing entry instead of adding a near-duplicate. Use action "save" with title/content to add or update an entry, or action "delete" with the entry's id to forget it. Memory is private to ${owner}.`,
 ]
 
 // With Code Mode on, plugin tools are not direct tool calls: they live in the
-// `execute` tool's catalog (for example `tools.memory`). Bots that are only told
+// `execute` tool's catalog (for example `tools.bots.memory`). Bots that are only told
 // "call bots_memory" look for a direct tool, find none, and give up.
 const TOOL_NOTE = [
   "Bot tools: bots_send, bots_memory, bots_role, bots_skill, bots_command, and bots_create (coordinator only).",
-  "If they are not listed as direct tools, they are in the execute tool's catalog (for example `await tools.memory({...})` inside execute). Search the catalog for them before concluding a tool is missing.",
+  "If they are not listed as direct tools, they are in the execute tool's catalog (for example `await tools.bots.memory({...})` inside execute). Search the catalog for them before concluding a tool is missing.",
 ]
 
 const FROM_BOT_RULES = [
   "- A message prefixed [From @handle] comes from another bot. Answer it directly and do not call bots_send for that message.",
   "- The other bot replies in its own session, and you receive its reply as the tool result.",
+]
+
+const LEARNING_RULES = [
+  "Learning:",
+  '- After a multi-step task whose success something outside you confirmed (tests or checks passed, the user confirmed it worked), you may propose a reusable skill with bots_skill action "propose", stating that evidence.',
+  '- Do not propose when success rests only on your own judgement, for one-off tasks, or when an existing skill covers it; improve that skill with a minimal "patch" instead.',
+  '- Use "save" only when the user asks you to create or change a skill.',
+  "- Change your role with bots_role only when the user asks.",
 ]
 
 const buildSystemPrompt = (bot: StoredBot) =>
@@ -438,6 +474,8 @@ const buildSystemPrompt = (bot: StoredBot) =>
     "- When the user's current message mentions another bot with @handle, call the bots_send tool with the target handle and the message to send.",
     "- Only call bots_send when the user's current message includes a bot mention. Never call it on your own.",
     ...FROM_BOT_RULES,
+    "",
+    ...LEARNING_RULES,
     "",
     ...memorySection(bot, "you"),
   ].join("\n")
@@ -562,7 +600,12 @@ export default Plugin.define({
         !("coordinatorID" in parsed) ||
         bots.some((bot) => "model" in bot) ||
         parsed.coordinatorID !== coordinatorID ||
-        skillsMigrated
+        skillsMigrated ||
+        // Persist the createdAt default once, or a skill's age resets on every load.
+        (Array.isArray(parsed.skills) &&
+          parsed.skills.some(
+            (item) => !!item && typeof item === "object" && !("createdAt" in item),
+          ))
       )
     }
 
@@ -824,7 +867,8 @@ export default Plugin.define({
     const appliesTo = (item: { scope: LibraryScope; botIDs: string[] }, botID: string) =>
       item.scope === "all" || item.botIDs.includes(botID)
 
-    const skillsFor = (botID: string) => store.skills.filter((skill) => appliesTo(skill, botID))
+    const skillsFor = (botID: string) =>
+      store.skills.filter((skill) => skill.status === "active" && appliesTo(skill, botID))
 
     const librarySkillIDs = () => new Set(store.skills.map((skill) => skill.id))
 
@@ -901,6 +945,7 @@ export default Plugin.define({
       const contents = await writeSkillFiles()
       skillRegistration = await ctx.skill.transform((editor) => {
         for (const skill of store.skills) {
+          if (skill.status !== "active") continue
           editor.add({
             id: Skill.ID.make(skill.id),
             name: Skill.Name.make(skill.name),
@@ -911,6 +956,29 @@ export default Plugin.define({
           })
         }
       })
+    }
+
+    /** Archives bot-authored, unpinned skills that have gone unused for 60 days. */
+    let lastSkillSweep = 0
+    const archiveStaleSkills = async (force = false) => {
+      const now = Date.now()
+      if (!force && now - lastSkillSweep < SKILL_SWEEP_MS) return
+      lastSkillSweep = now
+      const stale = store.skills.filter(
+        (skill) =>
+          skill.status === "active" &&
+          skill.author !== "" &&
+          !skill.pinned &&
+          now - Math.max(skill.lastUsedAt, skill.createdAt) > STALE_SKILL_MS,
+      )
+      if (stale.length === 0) return
+      for (const skill of stale) skill.status = "archived"
+      await save()
+      await registerSkills()
+      await emitChanged("skills")
+      console.log(
+        `[opencode-bots] archived ${stale.length} stale skill(s): ${stale.map((skill) => skill.id).join(", ")}`,
+      )
     }
 
     let guidanceWarning = false
@@ -1207,6 +1275,8 @@ export default Plugin.define({
         "- Only mention members listed above. Never call bots_send on your own.",
         ...FROM_BOT_RULES,
         "",
+        ...LEARNING_RULES,
+        "",
         ...memorySection(host, "the host bot"),
       ].join("\n")
     }
@@ -1269,17 +1339,21 @@ export default Plugin.define({
 
       const library = librarySkillIDs()
       if (library.size === 0 || !event.prompt.skills?.length) return
-      const allowed = source
-        ? new Set(skillsFor(source.id).map((skill) => skill.id))
-        : new Set<string>()
+      const allowedSkills = source ? skillsFor(source.id) : []
+      const allowed = new Set(allowedSkills.map((skill) => skill.id))
+      const loaded = allowedSkills.filter((skill) =>
+        event.prompt.skills?.some((entry) => entry.id === skill.id),
+      )
       event.prompt.skills = event.prompt.skills.filter(
         (skill) => !library.has(skill.id) || allowed.has(skill.id),
       )
+      await recordSkillUses(loaded)
     })
 
     // Runs only after a successful turn (not after failure or interruption).
     const idleHook = await ctx.session.hook("experimental.idle", async (event) => {
       await refreshStore()
+      await archiveStaleSkills()
       const { bot, group } = sourceFor(event.sessionID)
       if (!bot && !group) return
       // Work this session owns wakes it again when done, so wait for that. Work a
@@ -1334,6 +1408,18 @@ export default Plugin.define({
       return bot
     }
 
+    /** Records library skill loads for usage stats and stale-skill archiving. */
+    const recordSkillUses = async (skills: StoredSkill[]) => {
+      if (skills.length === 0) return
+      const now = Date.now()
+      for (const skill of skills) {
+        skill.uses += 1
+        skill.lastUsedAt = now
+      }
+      await save()
+      await emitChanged("skills")
+    }
+
     const saveBotSkill = async (source: StoredBot, input: unknown) => {
       const args = input as {
         action?: unknown
@@ -1344,15 +1430,22 @@ export default Plugin.define({
         files?: unknown
         path?: unknown
         encoding?: unknown
+        evidence?: unknown
+        old?: unknown
+        new?: unknown
       }
       const action =
-        args.action === "delete"
-          ? "delete"
-          : args.action === "write-file"
-            ? "write-file"
-            : args.action === "delete-file"
-              ? "delete-file"
-              : "save"
+        args.action === "propose"
+          ? "propose"
+          : args.action === "patch"
+            ? "patch"
+            : args.action === "delete"
+              ? "delete"
+              : args.action === "write-file"
+                ? "write-file"
+                : args.action === "delete-file"
+                  ? "delete-file"
+                  : "save"
       const skillID = () =>
         cleanSkillID(
           typeof args.id === "string" && args.id.trim()
@@ -1361,6 +1454,9 @@ export default Plugin.define({
               ? args.name
               : "",
         )
+      const pinnedError = (id: string) => ({
+        content: `Error: skill "${id}" is pinned by the user and cannot be changed by bots.`,
+      })
 
       if (action === "delete") {
         const id = skillID()
@@ -1371,6 +1467,7 @@ export default Plugin.define({
         if (!existing) {
           return { content: `Error: no skill with id "${id}".` }
         }
+        if (existing.pinned) return pinnedError(id)
         store.skills = store.skills.filter((skill) => skill.id !== id)
         await save()
         await removeSkillDir(id)
@@ -1382,9 +1479,11 @@ export default Plugin.define({
       if (action === "write-file" || action === "delete-file") {
         const id = skillID()
         if (!id) return { content: "Error: skill id is required." }
-        if (!store.skills.some((skill) => skill.id === id)) {
+        const existing = store.skills.find((skill) => skill.id === id)
+        if (!existing) {
           return { content: `Error: no skill with id "${id}".` }
         }
+        if (existing.pinned) return pinnedError(id)
         try {
           if (action === "write-file") {
             const result = await writeSkillFile(id, args.path, args.content, args.encoding)
@@ -1401,6 +1500,38 @@ export default Plugin.define({
         } catch (error) {
           return { content: `Error: ${error instanceof Error ? error.message : String(error)}` }
         }
+      }
+
+      if (action === "patch") {
+        const id = skillID()
+        if (!id) {
+          return { content: "Error: skill id or name is required to patch a skill." }
+        }
+        const existing = store.skills.find((skill) => skill.id === id)
+        if (!existing) {
+          return { content: `Error: no skill with id "${id}".` }
+        }
+        if (existing.pinned) return pinnedError(id)
+        const old = typeof args.old === "string" ? args.old : ""
+        const replacement = typeof args.new === "string" ? args.new : ""
+        if (!old) return { content: "Error: old text is required to patch a skill." }
+        const content = await readSkillContent(id)
+        const matches = content.split(old).length - 1
+        if (matches !== 1) {
+          return {
+            content: `Error: old text must match exactly once but matched ${matches} time(s) in skill "${id}".`,
+          }
+        }
+        const updated = content.replace(old, replacement)
+        if (updated.length > MAX_SKILL_CONTENT) {
+          return {
+            content: `Error: the patched instructions would exceed ${MAX_SKILL_CONTENT} characters.`,
+          }
+        }
+        await writeSkillDocument(existing, updated)
+        await registerSkills()
+        await emitChanged("skills")
+        return { content: `Patched skill "${id}".` }
       }
 
       const name = cleanLibraryText(args.name, MAX_NAME)
@@ -1420,16 +1551,31 @@ export default Plugin.define({
       }
 
       const existing = store.skills.find((skill) => skill.id === id)
-      if (existing) {
-        existing.name = name
-        existing.description = description
-        await writeSkillDocument(existing, content)
-        await save()
-      } else {
-        const globalCollision = (await ctx.skill.list()).data.some(
-          (skill) => skill.id === id && !librarySkillIDs().has(id),
-        )
-        if (globalCollision) {
+      const globalCollision = async () =>
+        (await ctx.skill.list()).data.some((skill) => skill.id === id && !librarySkillIDs().has(id))
+
+      if (action === "propose") {
+        const evidence = cleanLibraryText(args.evidence, MAX_SKILL_EVIDENCE)
+        if (!evidence) {
+          return {
+            content:
+              'Error: evidence is required to propose a skill. State what confirmed the approach worked, such as "tests passed".',
+          }
+        }
+        if (existing) {
+          return {
+            content: `Error: skill "${id}" already exists. Use action "patch" to change an existing skill.`,
+          }
+        }
+        const drafts = store.skills.filter(
+          (skill) => skill.status === "draft" && skill.author === source.id,
+        ).length
+        if (drafts >= MAX_PENDING_DRAFTS) {
+          return {
+            content: `Error: you have ${MAX_PENDING_DRAFTS} draft skills awaiting review. Wait for the user to review them in Library before proposing more.`,
+          }
+        }
+        if (await globalCollision()) {
           return {
             content: `Error: skill ID "${id}" already exists as a global skill. Choose a different ID.`,
           }
@@ -1441,6 +1587,43 @@ export default Plugin.define({
           autoinvoke: true,
           scope: "selected",
           botIDs: [source.id],
+          status: "draft",
+          pinned: false,
+          author: source.id,
+          evidence,
+          createdAt: Date.now(),
+          uses: 0,
+          lastUsedAt: 0,
+        }
+        store.skills.push(skill)
+        await writeSkillDocument(skill, content)
+        await save()
+      } else if (existing) {
+        if (existing.pinned) return pinnedError(id)
+        existing.name = name
+        existing.description = description
+        await writeSkillDocument(existing, content)
+        await save()
+      } else {
+        if (await globalCollision()) {
+          return {
+            content: `Error: skill ID "${id}" already exists as a global skill. Choose a different ID.`,
+          }
+        }
+        const skill: StoredSkill = {
+          id,
+          name,
+          description,
+          autoinvoke: true,
+          scope: "selected",
+          botIDs: [source.id],
+          status: "active",
+          pinned: false,
+          author: source.id,
+          evidence: "",
+          createdAt: Date.now(),
+          uses: 0,
+          lastUsedAt: 0,
         }
         store.skills.push(skill)
         await writeSkillDocument(skill, content)
@@ -1471,6 +1654,11 @@ export default Plugin.define({
       await registerSkills()
       await emitChanged("skills")
       const files = fileCount ? ` Added ${fileCount} supporting file(s).` : ""
+      if (action === "propose") {
+        return {
+          content: `Saved draft skill "${id}" for ${source.name}. It is not usable until the user approves it in Library.${files}`,
+        }
+      }
       if (existing) {
         return {
           content: `Updated skill "${id}" for ${source.name}. Its existing scope is unchanged.${files}`,
@@ -1677,6 +1865,7 @@ export default Plugin.define({
       editor.namespace({ name: "bots", description: "Bot messaging and bot library tools" })
       editor.add({
         name: "send",
+        options: { namespace: "bots" },
         description:
           "Send a message to another bot and wait for its reply. Use this only when the user's current message mentions another bot with @handle.",
         input: {
@@ -1792,26 +1981,42 @@ export default Plugin.define({
 
       editor.add({
         name: "skill",
+        options: { namespace: "bots" },
         description:
-          "Create, update, or delete a reusable bot-library skill, and manage its supporting files. A skill is a directory with SKILL.md plus optional references, scripts, and assets; paths inside the skill are relative to that directory. New skills are scoped only to you; existing skills keep their current scope, which may be shared. Changing a shared skill affects every bot using it, and deleting a shared skill removes it for everyone. Use the native skill tool to load a skill, not this tool.",
+          "Create, update, propose, or delete a reusable bot-library skill, and manage its supporting files. A skill is a directory with SKILL.md plus optional references, scripts, and assets; paths inside the skill are relative to that directory. New skills are scoped only to you; existing skills keep their current scope, which may be shared. Changing a shared skill affects every bot using it, and deleting a shared skill removes it for everyone. propose: your own initiative after something outside you confirmed the approach worked; it saves a draft the user must approve in Library. patch: a minimal change to an existing skill's instructions, preferred over rewriting. save: only when the user explicitly asks you to create or change a skill. Use the native skill tool to load a skill, not this tool.",
         input: {
           type: "object",
           properties: {
             action: {
               type: "string",
-              enum: ["save", "delete", "write-file", "delete-file"],
+              enum: ["save", "propose", "patch", "delete", "write-file", "delete-file"],
               description:
-                "save to add or update a skill; delete to remove it; write-file to add or replace a supporting file; delete-file to remove one.",
+                "save to create or fully update a skill when the user asks; propose to draft a skill you learned; patch to change part of an existing skill's instructions; delete to remove a skill; write-file to add or replace a supporting file; delete-file to remove one.",
             },
             id: {
               type: "string",
               description:
-                "Existing skill ID. Pass it to update, delete, or manage the files of a specific skill, including a shared one. Derived from the name when omitted on save.",
+                "Existing skill ID. Pass it to update, patch, delete, or manage the files of a specific skill, including a shared one. Derived from the name when omitted on save or propose.",
             },
             name: { type: "string", description: "Short display name for the skill." },
             description: {
               type: "string",
               description: "When the skill should be used, written for discovery.",
+            },
+            evidence: {
+              type: "string",
+              description:
+                'For propose: what externally confirmed the approach worked, such as "tests passed" or the user confirming the deploy worked.',
+            },
+            old: {
+              type: "string",
+              description:
+                "For patch: the exact text to replace. It must occur exactly once in the current instructions.",
+            },
+            new: {
+              type: "string",
+              description:
+                "For patch: the replacement text for old. Use an empty string to delete it.",
             },
             content: {
               type: "string",
@@ -1858,8 +2063,9 @@ export default Plugin.define({
 
       editor.add({
         name: "memory",
+        options: { namespace: "bots" },
         description:
-          "Save, update, or delete a memory entry for yourself. Use this when the user asks you to remember or forget something, or when they state a durable preference. Memory is private to this bot.",
+          "Save, update, or delete a memory entry for yourself. Save only facts and durable preferences the user actually stated; never save your own guesses, inferences about the user, or lessons you judged yourself. Keep entries short and update an existing entry instead of adding a near-duplicate. Memory is private to this bot.",
         input: {
           type: "object",
           properties: {
@@ -1896,8 +2102,9 @@ export default Plugin.define({
 
       editor.add({
         name: "role",
+        options: { namespace: "bots" },
         description:
-          "Replace your own role: the standing instructions that define who you are and how you behave. Use this when the user asks you to change your role, personality, focus, or standing instructions. Pass the complete new role, not a diff; start from your current role and keep what should stay. Use memory for facts, not this tool.",
+          "Replace your own role: the standing instructions that define who you are and how you behave. Use this only when the user asks you to change your role, personality, focus, or standing instructions; never on your own initiative. Pass the complete new role, not a diff; start from your current role and keep what should stay. Use memory for facts, not this tool.",
         input: {
           type: "object",
           properties: {
@@ -1917,6 +2124,7 @@ export default Plugin.define({
 
       editor.add({
         name: "command",
+        options: { namespace: "bots" },
         description:
           "Create, update, or delete a slash command in the bot library. New commands are scoped only to you; existing commands keep their current scope, which may be shared. Changing a shared command affects every bot using it, and deleting a shared command removes it for everyone. The command appears in the relevant chat's / menu.",
         input: {
@@ -1958,6 +2166,7 @@ export default Plugin.define({
 
       editor.add({
         name: "create",
+        options: { namespace: "bots" },
         description:
           "Create a new bot with its own persistent session. Only the coordinator bot can use this.",
         input: {
@@ -1998,6 +2207,12 @@ export default Plugin.define({
       if (!source || !appliesTo(skill, source.id)) {
         throw new Error("This skill is only available to its assigned bot sessions")
       }
+      if (skill.status !== "active") {
+        throw new Error(
+          `Skill "${skill.id}" is not active. It must be approved in the Library first`,
+        )
+      }
+      await recordSkillUses([skill])
     })
 
     if (freshInstall) {
@@ -2196,7 +2411,7 @@ export default Plugin.define({
         await refreshStore()
         const data = input as { commands: CommandInput[]; skills: SkillInput[] }
         await validateLibrary(data)
-        const previousSkills = new Set(store.skills.map((skill) => skill.id))
+        const previousSkills = new Map(store.skills.map((skill) => [skill.id, skill]))
         const contents = new Map<string, string>()
         for (const skill of data.skills) {
           const id = cleanSkillID(skill.id)
@@ -2205,11 +2420,17 @@ export default Plugin.define({
         store.commands = cleanCommands(data.commands, (id) => !!findBot(id))
         store.skills = cleanSkills(data.skills, (id) => !!findBot(id))
         for (const skill of store.skills) {
+          const previous = previousSkills.get(skill.id)
+          if (previous) {
+            skill.createdAt = previous.createdAt
+            skill.uses = previous.uses
+            skill.lastUsedAt = previous.lastUsedAt
+          }
           const content = contents.get(skill.id)
           if (content !== undefined) await writeSkillDocument(skill, content)
         }
         await save()
-        for (const id of previousSkills) {
+        for (const id of previousSkills.keys()) {
           if (!store.skills.some((skill) => skill.id === id)) {
             await removeSkillDir(id)
           }
@@ -2291,6 +2512,8 @@ export default Plugin.define({
     })
 
     emitChanged = (botID) => rpc.events.emit("changed", { botID })
+
+    await archiveStaleSkills(true)
 
     console.log(
       `[opencode-bots] workspace loaded ${store.bots.length} bot(s), ${store.groups.length} group(s), ${store.commands.length} command(s), ${store.skills.length} skill(s) from ${storePath} for ${workspace}`,
