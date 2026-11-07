@@ -1,0 +1,4 @@
+node_modules/
+*.log
+.DS_Store
+# dist/ is committed: Git installs run the prebuilt bundles without a build step.

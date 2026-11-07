@@ -1,0 +1,66 @@
+{
+  "name": "opencode-bots",
+  "version": "0.3.0",
+  "description": "Bots for OpenCode: persistent bot personas with groups, memory, a shared library, and a remote web app.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alefunion/opencode-bots.git"
+  },
+  "homepage": "https://github.com/alefunion/opencode-bots#readme",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "bots",
+    "agents"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./plugin/src/index.ts",
+    "./rpc": "./plugin/src/rpc.ts",
+    "./gui-experimental": "./dist/gui-experimental.cjs"
+  },
+  "files": [
+    "plugin/src",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "build": "bun run build:web && bun run build:gui",
+    "build:web": "rm -rf dist/web && bun build web/src/index.ts --target=bun --outdir=dist/web --minify --define:process.env.NODE_ENV='\"production\"' && cp -R web/src/sw.js web/src/icons dist/web/",
+    "build:gui": "cd plugin && vite build",
+    "watch:gui": "cd plugin && vite build --watch",
+    "dev": "bun web/src/index.ts",
+    "typecheck": "bun check -p plugin && bun check -p web",
+    "fmt": "bun fmt",
+    "fmt:check": "bun fmt --check"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.2.5"
+  },
+  "devDependencies": {
+    "@opencode/client": "^2.2.5",
+    "@opentunnel/client": "^0.6.2",
+    "@types/bun": "latest",
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/web-push": "^3.6.4",
+    "qrcode": "^1.5.4",
+    "qrcode-generator": "^2.0.4",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "solid-js": "^1.9.18",
+    "vite": "^8.3.6",
+    "vite-plugin-solid": "^2.11.15",
+    "web-push": "^4.0.0"
+  }
+}
