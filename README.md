@@ -205,17 +205,17 @@ discovered without a `plugins` entry (do not also install it with
 git clone https://github.com/alefunion/opencode-bots ~/.config/opencode/plugins/opencode-bots
 cd ~/.config/opencode/plugins/opencode-bots
 bun install
-bun run build
+bun run bundle
 ```
 
 ```sh
 bun run typecheck   # plugin and web app
 bun run fmt         # Bun's formatter (settings in bunfig.toml); fmt:check for CI
-bun run build       # dist/web (web app) and dist/gui-experimental.cjs (Desktop page)
+bun run bundle      # dist/web (web app) and dist/gui-experimental.cjs (Desktop page)
 bun run watch:gui   # rebuild the Desktop page while editing it
 ```
 
-The plugin always runs the prebuilt `dist/web`, so run `bun run build` after
+The plugin always runs the prebuilt `dist/web`, so run `bun run bundle` after
 changing `web/src`, then reload the plugin (`touch plugin/src/index.ts`); it
 replaces the running web app when the bundle changed. Changes to `package.json`
 need `opencode service restart`.
@@ -223,8 +223,9 @@ need `opencode service restart`.
 (`PORT=8890 bun run dev`) and set `BOT_NO_AUTH=1` to skip pairing. It also
 claims the `bots` tunnel route while running.
 
-`dist/` is committed so that installing from Git needs no build step. Rebuild
-and commit it with every source change.
+`dist/` is committed so that installing from Git needs no build step. Run `bun run bundle`
+and commit `dist/` with every source change. Git installs never build: a
+`build` script would make npm try to compile the package from source.
 
 ```text
 plugin/src/index.ts     server plugin: store, hooks, bots_* tools, RPC

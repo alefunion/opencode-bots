@@ -41,7 +41,7 @@ export function acquireWebHost(input: {
 }): () => void {
   const entry = join(input.appDir, "dist", "web", "index.js")
   if (!existsSync(entry)) {
-    console.warn(`[opencode-bots] web host not started: ${entry} is missing (run bun run build)`)
+    console.warn(`[opencode-bots] web host not started: ${entry} is missing (run bun run bundle)`)
     return () => {}
   }
   const version = [fileURLToPath(import.meta.url), entry]

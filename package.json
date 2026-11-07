@@ -31,7 +31,7 @@
     "linux"
   ],
   "scripts": {
-    "build": "bun run build:web && bun run build:gui",
+    "bundle": "bun run build:web && bun run build:gui",
     "build:web": "rm -rf dist/web && bun build web/src/index.ts --target=bun --outdir=dist/web --minify --define:process.env.NODE_ENV='\"production\"' && cp -R web/src/sw.js web/src/icons dist/web/",
     "build:gui": "cd plugin && vite build",
     "watch:gui": "cd plugin && vite build --watch",
