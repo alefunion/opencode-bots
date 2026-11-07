@@ -15,14 +15,16 @@ type IconName =
   | "check"
   | "command"
 
-/** The Bots for OpenCode mark: a speech bubble with a stepped tail and two eyes. */
-export function Mark({ size = 24 }: { size?: number }) {
+/**
+ * The Bots for OpenCode mark: a speech bubble robot with two eyes and two feet, on a 5 × 5 grid of
+ * OpenCode-logo strokes. Keep `size` a multiple of 5 so every edge lands on a pixel.
+ */
+export function Mark({ size = 25 }: { size?: number }) {
   return (
     <span className="brand-mark" style={{ width: size, height: size }} aria-hidden="true">
-      <svg viewBox="128 128 256 256" width={size} height={size}>
-        <path fill="#E2603C" d="M128 128H384V320H256V352H224V384H160V320H128Z" />
-        <rect x="160" y="192" width="64" height="64" fill="#131010" />
-        <rect x="288" y="192" width="64" height="64" fill="#131010" />
+      <svg viewBox="0 0 5 5" width={size} height={size}>
+        <path className="brand-mark-shade" d="M1 2H4V3H1Z" />
+        <path fillRule="evenodd" d="M0 0H5V5H4V4H1V5H0ZM1 1H2V2H3V1H4V3H1Z" />
       </svg>
     </span>
   )

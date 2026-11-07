@@ -24,7 +24,7 @@ export function Pairing({ onPaired }: { onPaired: () => Promise<void> }) {
 
   return (
     <div className="boot pairing">
-      <Mark size={36} />
+      <Mark size={35} />
       <h1>Pair this device</h1>
       <p>
         Bots for OpenCode lives on a private address. Paste the pairing link from OpenCode Desktop,

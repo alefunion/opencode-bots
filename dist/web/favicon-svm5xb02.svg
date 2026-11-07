@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5 5" width="300" height="300">
+  <style>
+    path { fill: #1F1F1F; }
+    .shade { fill-opacity: 0.2; }
+    @media (prefers-color-scheme: dark) {
+      path { fill: #EEEEEE; }
+      .shade { fill-opacity: 0.28; }
+    }
+  </style>
+  <path class="shade" d="M1 2H4V3H1Z"/>
+  <path fill-rule="evenodd" d="M0 0H5V5H4V4H1V5H0ZM1 1H2V2H3V1H4V3H1Z"/>
+</svg>
