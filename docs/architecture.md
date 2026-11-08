@@ -52,7 +52,8 @@ plugin/src/gui.tsx      Desktop Settings → Bots page
 web/src/index.ts        web app server: pairing, proxy, push, tunnel
 web/src/remote.ts       tunnel connection and pairing cookies
 web/src/App.tsx         React app
-web/src/components/     chat, sidebar, and Settings tabs (Planner.tsx: Tasks and Jobs)
+web/src/components/     chat, sidebar, and Settings tabs (Planner.tsx: Tasks and Jobs;
+                        Requests.tsx: question and permission cards)
 web/src/sw.js           service worker (push, notification clicks)
 ```
 

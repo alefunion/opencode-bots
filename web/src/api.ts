@@ -4,11 +4,14 @@ import type {
   BotCommand,
   BotSkill,
   BotsState,
+  FormInfo,
+  FormReply,
   Group,
   JobInput,
   ModelOption,
   ModelRef,
   PairingLink,
+  PermissionRequest,
   PromptAttachment,
   RemoteInfo,
   SessionInfo,
@@ -133,6 +136,31 @@ export const botsApi = {
   saveJob: (input: JobInput) => rpc<BotsState>("saveJob", input),
   removeJob: (id: string) => rpc<BotsState>("removeJob", { id }),
   runJob: (id: string) => rpc<BotsState>("runJob", { id }),
+}
+
+/**
+ * Questions (the native question tool) and permission prompts block a session
+ * until someone answers them, so the app answers them in the chat itself.
+ */
+export const requestsApi = {
+  list: async () => {
+    const location = { directory: await workspace() }
+    const [forms, permissions] = await Promise.all([
+      client.form.list({ location }),
+      client.permission.request.list({ location }),
+    ])
+    return { forms: forms.data, permissions: permissions.data }
+  },
+  answer: (form: FormInfo, answer: FormReply) =>
+    client.session.form.reply({ sessionID: form.sessionID, formID: form.id, answer }),
+  dismiss: (form: FormInfo) =>
+    client.session.form.cancel({
+      sessionID: form.sessionID,
+      formID: form.id,
+      message: "The user dismissed this in the Bots app.",
+    }),
+  permit: (request: PermissionRequest, decision: "once" | "always" | "reject") =>
+    client.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision }),
 }
 
 export const remoteApi = {

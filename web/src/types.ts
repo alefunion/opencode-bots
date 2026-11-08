@@ -1,3 +1,14 @@
+import type { FormInfo, PermissionRequest } from "@opencode/client"
+
+export type { FormField, FormInfo, PermissionRequest } from "@opencode/client"
+
+/** A question form or permission request a bot session is blocked on. */
+export type PendingRequest =
+  | { kind: "form"; bot: Bot; form: FormInfo }
+  | { kind: "permission"; bot: Bot; request: PermissionRequest }
+
+export type FormReply = Record<string, string | number | boolean | string[]>
+
 export type ModelRef = {
   providerID: string
   id: string

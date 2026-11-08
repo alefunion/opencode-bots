@@ -1,9 +1,10 @@
 import { Fragment, useEffect, useRef } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import type { Bot, BotCommand, Group, PromptAttachment, UiMessage } from "../types"
+import type { Bot, BotCommand, Group, PendingRequest, PromptAttachment, UiMessage } from "../types"
 import { Avatar } from "./Avatar"
 import { Composer } from "./Composer"
+import { Requests } from "./Requests"
 import { Icon } from "../icons"
 
 export function Chat({
@@ -14,6 +15,8 @@ export function Chat({
   messages,
   typing,
   streaming,
+  requests,
+  onAnswered,
   onSend,
   onBack,
 }: {
@@ -24,6 +27,8 @@ export function Chat({
   messages: UiMessage[]
   typing: boolean
   streaming: string
+  requests: PendingRequest[]
+  onAnswered: () => void
   onSend: (text: string, files: PromptAttachment[]) => void
   onBack: () => void
 }) {
@@ -34,7 +39,7 @@ export function Chat({
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" })
-  }, [messages, streaming, typing])
+  }, [messages, streaming, typing, requests.length])
 
   const visible = messages.filter((message) => message.role !== "synthetic" || message.text.trim())
 
@@ -143,7 +148,9 @@ export function Chat({
           })
         )}
 
-        {typing ? (
+        <Requests requests={requests} onDone={onAnswered} />
+
+        {typing && requests.length === 0 ? (
           <div className="message-row assistant">
             <Avatar name={bot.name} color={bot.color} size={24} />
             <div className="bubble assistant-bubble streaming">

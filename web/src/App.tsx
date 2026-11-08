@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { client, botsApi, loadMessages, remoteApi, send as sendToSession } from "./api"
+import { client, botsApi, loadMessages, remoteApi, requestsApi, send as sendToSession } from "./api"
 import type {
   Bot,
   BotsState,
+  FormInfo,
   Group,
   ModelOption,
+  PendingRequest,
+  PermissionRequest,
   PromptAttachment,
   RemoteInfo,
   SessionInfo,
@@ -63,11 +66,16 @@ export function App() {
   const [settings, setSettings] = useState<SettingsState | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [session, setSession] = useState<SessionInfo | null>(null)
+  const [pending, setPending] = useState<{ forms: FormInfo[]; permissions: PermissionRequest[] }>({
+    forms: [],
+    permissions: [],
+  })
   const remote = session?.remote ?? OFFLINE
 
   const actionsRef = useRef({
     refreshState: async () => {},
     loadMessagesForSession: async (_sessionID: string) => {},
+    refreshPending: async () => {},
   })
 
   const selectedBot = useMemo(
@@ -98,6 +106,41 @@ export function App() {
           )
         : [],
     [selectedCommandBot, state.commands],
+  )
+
+  /** Pending questions and permission prompts for a chat, from every session it waits on. */
+  const requestsFor = (owners: Map<string, Bot>): PendingRequest[] => [
+    ...pending.forms.flatMap((form) => {
+      const bot = owners.get(form.sessionID)
+      return bot ? [{ kind: "form" as const, bot, form }] : []
+    }),
+    ...pending.permissions.flatMap((request) => {
+      const bot = owners.get(request.sessionID)
+      return bot ? [{ kind: "permission" as const, bot, request }] : []
+    }),
+  ]
+
+  // A group's members answer in their own sessions, so their questions block the group too.
+  const selectedRequests = useMemo(() => {
+    const owners = new Map<string, Bot>()
+    if (selectedBot?.sessionID) owners.set(selectedBot.sessionID, selectedBot)
+    if (selectedGroup && selectedHost) {
+      owners.set(selectedGroup.sessionID, selectedHost)
+      for (const bot of state.bots) {
+        if (bot.sessionID && selectedGroup.memberIDs.includes(bot.id))
+          owners.set(bot.sessionID, bot)
+      }
+    }
+    return requestsFor(owners)
+  }, [pending, selectedBot, selectedGroup, selectedHost, state.bots])
+
+  const waiting = useMemo(
+    () =>
+      new Set([
+        ...pending.forms.map((form) => form.sessionID),
+        ...pending.permissions.map((request) => request.sessionID),
+      ]),
+    [pending],
   )
 
   const unread = useMemo(() => {
@@ -181,7 +224,16 @@ export function App() {
     })
   }
 
+  const refreshPending = async () => {
+    try {
+      setPending(await requestsApi.list())
+    } catch {
+      // Keep the last list; the next form or permission event refreshes it.
+    }
+  }
+
   const refreshState = async () => {
+    void refreshPending()
     const next = await botsApi.state()
     setState(next)
     setSelected((current) => {
@@ -199,7 +251,7 @@ export function App() {
     await loadAllMessages(next.bots, next.groups)
   }
 
-  actionsRef.current = { refreshState, loadMessagesForSession }
+  actionsRef.current = { refreshState, loadMessagesForSession, refreshPending }
 
   const loadInitial = async () => {
     setError(null)
@@ -222,6 +274,7 @@ export function App() {
         )
       }
       await loadAllMessages(next.bots, next.groups)
+      void refreshPending()
 
       // A notification opens `/?bot=<id>` or `/?group=<id>`. Otherwise land on
       // the coordinator so the app does not open empty.
@@ -377,6 +430,8 @@ export function App() {
                 clearActivity(sessionID)
                 void actionsRef.current.loadMessagesForSession(sessionID)
               }
+              // An interrupted run cancels the questions it was waiting on.
+              void actionsRef.current.refreshPending()
               if (type === "session.execution.failed") {
                 const message =
                   data?.error && typeof data.error === "object" && "message" in data.error
@@ -389,6 +444,11 @@ export function App() {
 
             if (type === "session.message.content.updated" && sessionID) {
               void actionsRef.current.loadMessagesForSession(sessionID)
+              continue
+            }
+
+            if (type.startsWith("form.") || type.startsWith("permission.")) {
+              void actionsRef.current.refreshPending()
               continue
             }
 
@@ -526,6 +586,7 @@ export function App() {
         messages={messages}
         unread={unread}
         typing={typing}
+        waiting={waiting}
         onSelectBot={(bot) => void select({ kind: "bot", id: bot.id }, bot.name, bot.sessionID)}
         onSelectGroup={(group) =>
           void select({ kind: "group", id: group.id }, group.name, group.sessionID)
@@ -542,6 +603,8 @@ export function App() {
           messages={messages[selectedSessionID ?? ""] ?? []}
           typing={typing.has(selectedSessionID ?? "")}
           streaming={streaming[selectedSessionID ?? ""]?.text ?? ""}
+          requests={selectedRequests}
+          onAnswered={() => void refreshPending()}
           onSend={(text, files) => void send(text, files)}
           onBack={() => setSelected(null)}
         />
@@ -554,6 +617,8 @@ export function App() {
           messages={messages[selectedSessionID ?? ""] ?? []}
           typing={typing.has(selectedSessionID ?? "")}
           streaming={streaming[selectedSessionID ?? ""]?.text ?? ""}
+          requests={selectedRequests}
+          onAnswered={() => void refreshPending()}
           onSend={(text, files) => void send(text, files)}
           onBack={() => setSelected(null)}
         />

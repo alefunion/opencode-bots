@@ -12,6 +12,7 @@ export function Sidebar({
   messages,
   unread,
   typing,
+  waiting,
   onSelectBot,
   onSelectGroup,
   onNewBot,
@@ -23,6 +24,8 @@ export function Sidebar({
   messages: Record<string, UiMessage[]>
   unread: Set<string>
   typing: Set<string>
+  /** Sessions blocked on a question or permission prompt. */
+  waiting: Set<string>
   onSelectBot: (bot: Bot) => void
   onSelectGroup: (group: Group) => void
   onNewBot: () => void
@@ -109,6 +112,13 @@ export function Sidebar({
                   const last = list.at(-1)
                   const host = bots.find((bot) => bot.id === group.hostID)
                   const active = selected?.kind === "group" && selected.id === group.id
+                  // A busy group also waits on a member that is asking something.
+                  const asking =
+                    waiting.has(group.sessionID) ||
+                    (typing.has(group.sessionID) &&
+                      bots.some(
+                        (bot) => group.memberIDs.includes(bot.id) && waiting.has(bot.sessionID),
+                      ))
                   return (
                     <button
                       key={group.id}
@@ -123,13 +133,17 @@ export function Sidebar({
                         </span>
                         <span className="bot-row-bottom">
                           <span className="bot-row-preview">
-                            {typing.has(group.sessionID)
-                              ? "typing…"
-                              : last
-                                ? preview(last)
-                                : host
-                                  ? `${host.name} hosts · ${group.memberIDs.length} ${group.memberIDs.length === 1 ? "member" : "members"}`
-                                  : "Group"}
+                            {asking ? (
+                              <span className="waiting-label">Waiting for your answer</span>
+                            ) : typing.has(group.sessionID) ? (
+                              "typing…"
+                            ) : last ? (
+                              preview(last)
+                            ) : host ? (
+                              `${host.name} hosts · ${group.memberIDs.length} ${group.memberIDs.length === 1 ? "member" : "members"}`
+                            ) : (
+                              "Group"
+                            )}
                           </span>
                           {unread.has(`group:${group.id}`) ? <span className="unread-dot" /> : null}
                         </span>
@@ -161,11 +175,15 @@ export function Sidebar({
                         </span>
                         <span className="bot-row-bottom">
                           <span className="bot-row-preview">
-                            {typing.has(bot.sessionID)
-                              ? "typing…"
-                              : last
-                                ? preview(last)
-                                : `@${bot.handle}`}
+                            {waiting.has(bot.sessionID) ? (
+                              <span className="waiting-label">Waiting for your answer</span>
+                            ) : typing.has(bot.sessionID) ? (
+                              "typing…"
+                            ) : last ? (
+                              preview(last)
+                            ) : (
+                              `@${bot.handle}`
+                            )}
                           </span>
                           {unread.has(`bot:${bot.id}`) ? <span className="unread-dot" /> : null}
                         </span>

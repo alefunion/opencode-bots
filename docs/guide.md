@@ -31,6 +31,13 @@ so you can open them in Desktop too.
   **Settings → Bots**; deleting it clears the setting.
 - **Bot-to-bot messages.** Bots reach each other with `@handle`, so one bot can
   delegate to another.
+- **Questions and permissions.** When a bot asks you something with OpenCode's
+  question tool, or needs a permission you set to ask, it waits until you
+  answer. The question appears as a card at the end of the chat, and the chat
+  shows **Waiting for your answer** in the sidebar. Pick an option or type your
+  own answer, then **Send answer**; **Dismiss** lets the bot carry on without
+  one. A group member's questions appear in the group too. You can also answer
+  in Desktop.
 - **Attachments.** Use `+` in the composer (or `Cmd`/`Ctrl` + `U`), paste, or
   drag files in: up to 10 files, 10 MB each, 25 MB in total.
 - **Deleting a bot** deletes its OpenCode session, as in Desktop. If that fails,
@@ -121,7 +128,8 @@ In the app, open **Settings → Remote → Notifications** and tap **Enable
 notifications**. Each device opts in separately; **Send test** checks delivery.
 
 - You're notified when a bot or group you messaged finishes, and when a job run
-  or task reminder does (each job can turn this off). Bot-to-bot and
+  or task reminder does (each job can turn this off), and when a bot asks you
+  a question (including from a job or another bot). Bot-to-bot and
   group-member replies stay quiet, background work is allowed to finish first,
   and failed runs don't notify. Tapping a notification opens the conversation.
 - It's standard Web Push with keys generated on your machine: no Apple Developer

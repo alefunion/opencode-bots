@@ -3093,8 +3093,33 @@ export default Plugin.define({
     })
 
     // The bots_* tools check their session themselves. This guard covers the
-    // native skill tool, which would otherwise load any bot-library skill.
+    // native skill tool, which would otherwise load any bot-library skill, and
+    // notifies when a bot's native question tool starts waiting for the user.
     const toolGuard = await ctx.tool.hook("execute.before", async (event) => {
+      if (event.tool.toLowerCase() === "question") {
+        // The run blocks until someone answers, so the finished notification never comes.
+        await refreshStore()
+        const { bot, group } = sourceFor(event.sessionID)
+        if (!bot && !group) return
+        const questions = (event.input as { questions?: unknown } | undefined)?.questions
+        const first = Array.isArray(questions)
+          ? (questions[0] as { question?: unknown } | undefined)?.question
+          : undefined
+        const text = typeof first === "string" ? first.replace(/\s+/g, " ").trim() : ""
+        void sendPush({
+          title: `${bot?.name ?? group?.name} has a question`,
+          body: !text
+            ? "Waiting for your answer."
+            : text.length > 160
+              ? `${text.slice(0, 157)}…`
+              : text,
+          url: bot
+            ? `/?bot=${encodeURIComponent(bot.id)}`
+            : `/?group=${encodeURIComponent(group!.id)}`,
+          tag: `opencode-bots:${event.sessionID}:question`,
+        })
+        return
+      }
       if (event.tool.toLowerCase() !== "skill") return
       const id = (event.input as { id?: unknown } | undefined)?.id
       await refreshStore()
