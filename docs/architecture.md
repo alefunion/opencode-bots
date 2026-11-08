@@ -13,7 +13,7 @@ Web app  127.0.0.1:49384       prebuilt; serves the UI, proxies /api, sends Web 
   ▼
 OpenCode background service    the one Desktop uses
   ├─ plugin, every location:   keeps one web app process running
-  ├─ plugin, bot workspace:    bot tools, persona and memory, library, RPC
+  ├─ plugin, bot workspace:    bot tools, persona and memory, library, scheduler, RPC
   └─ Desktop GUI:              Settings → Bots
 ```
 
@@ -22,6 +22,15 @@ is nothing else to install. It is a child of the OpenCode service and is
 restarted within seconds if it exits. It finds the service on its own and needs
 no password. Plugin instances in other locations do nothing else, so classic
 sessions get no bot persona.
+
+The bot-workspace plugin runs the task and job schedule itself, checking every
+20 seconds; OpenCode's native schedules are off by default and not exposed to
+plugins. A due job or task wakes its bot with a synthetic message in the bot's
+own session (`delivery: "queue"`, `resume: true`), tagged `botsJob` or
+`botsTask` in its metadata. That tag is how the app draws the collapsible note,
+how notifications are titled, and how `bots_send` treats the scheduled prompt
+as the current message. Each run is saved to `bots.json` before the bot is
+woken, so a restart can't fire it twice.
 
 The tunnel reuses the OpenTunnel identity OpenCode itself pairs with (profile
 `default`) and claims its own `bots` route, so the address is stable across
@@ -35,13 +44,15 @@ supported), and port `49384` free on `127.0.0.1`.
 ## Source layout
 
 ```text
-plugin/src/index.ts     server plugin: store, hooks, bots_* tools, RPC
+plugin/src/index.ts     server plugin: store, hooks, bots_* tools, scheduler, RPC
 plugin/src/rpc.ts       RPC contract shared with the web app and Desktop page
+plugin/src/schedule.ts  cron and wake-time parsing, shared with the web app
 plugin/src/webhost.ts   runs the web app on OpenCode's Bun runtime
 plugin/src/gui.tsx      Desktop Settings → Bots page
 web/src/index.ts        web app server: pairing, proxy, push, tunnel
 web/src/remote.ts       tunnel connection and pairing cookies
 web/src/App.tsx         React app
+web/src/components/     chat, sidebar, and Settings tabs (Planner.tsx: Tasks and Jobs)
 web/src/sw.js           service worker (push, notification clicks)
 ```
 

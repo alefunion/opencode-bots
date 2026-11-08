@@ -13,7 +13,7 @@ import type {
 import { syncPushSubscription } from "./push"
 import { Sidebar, type Selection } from "./components/Sidebar"
 import { Chat } from "./components/Chat"
-import { Settings } from "./components/Settings"
+import { Settings, type SettingsTab } from "./components/Settings"
 import { Pairing } from "./components/Pairing"
 import { Icon, Mark } from "./icons"
 
@@ -27,7 +27,7 @@ const OFFLINE: RemoteInfo = {
 
 type Toast = { message: string; variant: "success" | "error" }
 type SettingsState = {
-  tab: "bots" | "groups" | "commands" | "skills"
+  tab: SettingsTab
   mode: "settings" | "new"
   groupID?: string
 }
@@ -41,7 +41,10 @@ export function App() {
     groups: [],
     commands: [],
     skills: [],
+    tasks: [],
+    jobs: [],
     coordinatorID: "",
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   })
   const [models, setModels] = useState<ModelOption[]>([])
   const [selected, setSelected] = useState<Selection | null>(null)

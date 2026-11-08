@@ -29,6 +29,8 @@ import {
   type GroupInput,
   type GroupPatch,
   type GroupView,
+  type JobInput,
+  type JobView,
   type LibraryScope,
   type ModelRef,
   type SkillFileContent,
@@ -36,7 +38,21 @@ import {
   type SkillInput,
   type SkillStatus,
   type SkillView,
+  type TaskInput,
+  type TaskStatus,
+  type TaskView,
 } from "./rpc"
+import {
+  describeCron,
+  formatDay,
+  formatTime,
+  localTimeZone,
+  nextRun,
+  parseCron,
+  parseWakeTime,
+  shortestGap,
+  validTimeZone,
+} from "./schedule"
 
 const DATA_HOME = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share")
 // Installs from before the rename keep their folder: bot sessions are tied to it.
@@ -82,6 +98,19 @@ const MAX_SKILL_FILE_BYTES = 4 * 1024 * 1024
 const MAX_SKILL_FILES = 200
 const MAX_SKILL_TOTAL_BYTES = 40 * 1024 * 1024
 const TARGET_TIMEOUT_MS = 120_000
+const MAX_TASK_TITLE = 200
+const MAX_TASK_NOTES = 4_000
+const MAX_TASKS = 300
+const MAX_OPEN_TASKS_PER_BOT = 50
+const MAX_JOBS = 50
+const MAX_JOB_NAME = 80
+const MAX_JOB_PROMPT = 8_000
+const MIN_JOB_GAP_MS = 5 * 60 * 1000
+const DONE_TASK_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const PROMPT_TASKS = 30
+const SCHEDULE_TICK_MS = 20_000
+const LATE_RUN_MS = 2 * 60 * 1000
+const PRUNE_MS = 60 * 60 * 1000
 
 type StoredMemory = {
   id: string
@@ -143,6 +172,40 @@ type StoredSkill = {
   lastUsedAt: number
 }
 
+type StoredTask = {
+  id: string
+  botID: string
+  title: string
+  notes: string
+  status: TaskStatus
+  /** When the task wakes its bot; 0 means no wake time. Cleared once it fires. */
+  wakeAt: number
+  /** The bot that created the task, or "" when the user created it. */
+  author: string
+  createdAt: number
+  updatedAt: number
+  doneAt: number
+}
+
+type StoredJob = {
+  id: string
+  botID: string
+  name: string
+  prompt: string
+  cron: string
+  timeZone: string
+  enabled: boolean
+  notify: boolean
+  /** The bot that created the job, or "" when the user created it. */
+  author: string
+  createdAt: number
+  updatedAt: number
+  /** 0 when paused or when the expression never matches again. */
+  nextRunAt: number
+  lastRunAt: number
+  runs: number
+}
+
 type Store = {
   version: 1
   model: ModelRef | null
@@ -150,6 +213,8 @@ type Store = {
   groups: StoredGroup[]
   commands: StoredCommand[]
   skills: StoredSkill[]
+  tasks: StoredTask[]
+  jobs: StoredJob[]
   coordinatorID: string
 }
 
@@ -319,6 +384,133 @@ const cleanSkills = (value: unknown, validBot: (id: string) => boolean): StoredS
   return output
 }
 
+const cleanTaskStatus = (value: unknown): TaskStatus =>
+  value === "doing" || value === "done" ? value : "todo"
+
+const cleanItemID = (value: unknown) =>
+  typeof value === "string" && /^[a-zA-Z0-9._-]{1,64}$/.test(value) ? value : ""
+
+/** Short IDs: bots quote them in tool calls, and they appear in every prompt. */
+const shortID = (taken: (id: string) => boolean) => {
+  let id = randomBytes(4).toString("hex")
+  while (taken(id)) id = randomBytes(4).toString("hex")
+  return id
+}
+
+const cleanTasks = (value: unknown, validBot: (id: string) => boolean): StoredTask[] => {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const output: StoredTask[] = []
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue
+    const record = item as Record<string, unknown>
+    const botID = typeof record.botID === "string" ? record.botID : ""
+    const title = cleanLibraryText(record.title, MAX_TASK_TITLE)
+    if (!validBot(botID) || !title) continue
+    const id = cleanItemID(record.id) || shortID((taken) => seen.has(taken))
+    if (seen.has(id)) continue
+    seen.add(id)
+    const status = cleanTaskStatus(record.status)
+    const createdAt = cleanCount(record.createdAt) || Date.now()
+    output.push({
+      id,
+      botID,
+      title,
+      notes: cleanLibraryText(record.notes, MAX_TASK_NOTES),
+      status,
+      wakeAt: status === "done" ? 0 : cleanCount(record.wakeAt),
+      author: cleanLibraryText(record.author, MAX_SKILL_ID),
+      createdAt,
+      updatedAt: cleanCount(record.updatedAt) || createdAt,
+      doneAt: status === "done" ? cleanCount(record.doneAt) || createdAt : 0,
+    })
+  }
+  return output
+}
+
+const cleanJobs = (
+  value: unknown,
+  validBot: (id: string) => boolean,
+  timeZone: string,
+): StoredJob[] => {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const output: StoredJob[] = []
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue
+    const record = item as Record<string, unknown>
+    const botID = typeof record.botID === "string" ? record.botID : ""
+    const prompt = cleanLibraryText(record.prompt, MAX_JOB_PROMPT)
+    const cron = typeof record.cron === "string" ? record.cron.trim() : ""
+    if (!validBot(botID) || !prompt || !cron) continue
+    const id = cleanItemID(record.id) || shortID((taken) => seen.has(taken))
+    if (seen.has(id)) continue
+    seen.add(id)
+    const zone = typeof record.timeZone === "string" ? record.timeZone.trim() : ""
+    const createdAt = cleanCount(record.createdAt) || Date.now()
+    const enabled = record.enabled !== false
+    output.push({
+      id,
+      botID,
+      name: cleanLibraryText(record.name, MAX_JOB_NAME) || "Scheduled job",
+      prompt,
+      cron,
+      timeZone: zone && validTimeZone(zone) ? zone : timeZone,
+      enabled,
+      notify: record.notify !== false,
+      author: cleanLibraryText(record.author, MAX_SKILL_ID),
+      createdAt,
+      updatedAt: cleanCount(record.updatedAt) || createdAt,
+      nextRunAt: enabled ? cleanCount(record.nextRunAt) : 0,
+      lastRunAt: cleanCount(record.lastRunAt),
+      runs: cleanCount(record.runs),
+    })
+  }
+  return output
+}
+
+/** The next run after `after`, or 0 when the job is paused or never runs again. */
+const jobNextRun = (job: Pick<StoredJob, "cron" | "timeZone" | "enabled">, after: number) => {
+  if (!job.enabled) return 0
+  try {
+    return nextRun(parseCron(job.cron), after, job.timeZone) ?? 0
+  } catch {
+    return 0
+  }
+}
+
+/** Throws a readable error unless the expression runs, and no more often than every 5 minutes. */
+const validateSchedule = (cron: string, timeZone: string) => {
+  if (!validTimeZone(timeZone)) {
+    throw new Error(`"${timeZone}" is not a time zone. Use an IANA name such as "Europe/Paris".`)
+  }
+  const parsed = parseCron(cron)
+  const now = Date.now()
+  if (nextRun(parsed, now, timeZone) === null) {
+    throw new Error(`"${cron}" never runs. Check the day and month fields.`)
+  }
+  if (shortestGap(parsed, now, timeZone) < MIN_JOB_GAP_MS) {
+    throw new Error("A job can run at most once every 5 minutes.")
+  }
+}
+
+const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  todo: "To do",
+  doing: "In progress",
+  done: "Done",
+}
+
+/** In progress first, then by wake time (soonest first), then most recently updated. */
+const taskOrder = (a: StoredTask, b: StoredTask) =>
+  (a.status === "doing" ? 0 : 1) - (b.status === "doing" ? 0 : 1) ||
+  (a.wakeAt || Infinity) - (b.wakeAt || Infinity) ||
+  b.updatedAt - a.updatedAt
+
+const oneLine = (text: string, max: number) => {
+  const flat = text.replace(/\s+/g, " ").trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+}
+
 const parseArguments = (value: string) => {
   const output: string[] = []
   const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g
@@ -394,6 +586,10 @@ const toGroupView = (group: StoredGroup): GroupView => ({
   updatedAt: group.updatedAt,
 })
 
+const toTaskView = (task: StoredTask): TaskView => ({ ...task })
+
+const toJobView = (job: StoredJob): JobView => ({ ...job })
+
 const storedBot = (raw: Record<string, unknown>): StoredBot => {
   const name = cleanName(raw.name)
   const created = typeof raw.createdAt === "number" ? raw.createdAt : Date.now()
@@ -442,7 +638,7 @@ const memorySection = (bot: StoredBot, owner: string) => [
 // `execute` tool's catalog (for example `tools.bots.memory`). Bots that are only told
 // "call bots_memory" look for a direct tool, find none, and give up.
 const TOOL_NOTE = [
-  "Bot tools: bots_send, bots_memory, bots_role, bots_skill, bots_command, and bots_create (coordinator only).",
+  "Bot tools: bots_send, bots_memory, bots_role, bots_skill, bots_command, bots_task, bots_job, and bots_create (coordinator only).",
   "If they are not listed as direct tools, they are in the execute tool's catalog (for example `await tools.bots.memory({...})` inside execute). Search the catalog for them before concluding a tool is missing.",
 ]
 
@@ -459,7 +655,94 @@ const LEARNING_RULES = [
   "- Change your role with bots_role only when the user asks.",
 ]
 
-const buildSystemPrompt = (bot: StoredBot) =>
+const PLANNING_RULES = [
+  "Tasks and jobs:",
+  "- Track work that outlives your current reply with bots_task: follow-ups, multi-step work, and anything you promised to do later. Keep the list current: in progress when you start, done when finished; delete tasks that no longer matter.",
+  '- Give a task a wake time to be reminded at that moment (wake: "45m", "2h", "3d", or "2026-11-09 09:00"). When a task reminder arrives, act on it, then mark the task done or snooze it with a new wake time.',
+  "- Create a scheduled job with bots_job only when the user asks for something to happen repeatedly. Each run posts the job's prompt into your conversation.",
+  '- Messages that start with "Scheduled job" or "Task reminder" are automatic: the user did not just write them and may not be watching. Do the work and reply with a short result.',
+]
+
+const COORDINATOR_PLANNING_RULES = [
+  "- As the coordinator you keep the team on track. You see every bot's open tasks below, and you can assign tasks or schedule jobs for any bot by passing its handle as bot. When the user hands you work with a deadline or a follow-up, record it as a task with a wake time so you come back to it without being asked.",
+]
+
+type PlanData = {
+  tasks: readonly StoredTask[]
+  jobs: readonly StoredJob[]
+  bots: readonly StoredBot[]
+  coordinator: boolean
+  timeZone: string
+}
+
+const taskLine = (task: StoredTask, timeZone: string, owner = "") =>
+  [
+    `- [${task.id}] ${owner}${TASK_STATUS_LABEL[task.status]}: ${task.title}`,
+    task.wakeAt ? ` (wakes ${formatTime(task.wakeAt, timeZone)})` : "",
+    task.notes ? ` — ${oneLine(task.notes, 200)}` : "",
+  ].join("")
+
+const jobLine = (job: StoredJob) =>
+  [
+    `- [${job.id}] ${job.name}: ${describeCron(job.cron)} (${job.timeZone})`,
+    !job.enabled
+      ? ", paused"
+      : job.nextRunAt
+        ? `, next ${formatTime(job.nextRunAt, job.timeZone)}`
+        : ", never runs again",
+    ` — ${oneLine(job.prompt, 160)}`,
+  ].join("")
+
+/**
+ * The bot's own board and jobs, plus the whole team's open tasks for the
+ * coordinator. The date has day precision so the prompt stays cacheable.
+ */
+const planSection = (bot: StoredBot, plan: PlanData) => {
+  const open = plan.tasks
+    .filter((task) => task.botID === bot.id && task.status !== "done")
+    .sort(taskOrder)
+  const jobs = plan.jobs.filter((job) => job.botID === bot.id)
+  const more = (count: number) =>
+    count > PROMPT_TASKS ? [`- …and ${count - PROMPT_TASKS} more (bots_task action "list").`] : []
+  const lines = [
+    `Today is ${formatDay(Date.now(), plan.timeZone)} (time zone ${plan.timeZone}). Scheduled messages and bots_task results carry the exact time.`,
+    "",
+    "Your tasks:",
+    ...(open.length
+      ? [
+          ...open.slice(0, PROMPT_TASKS).map((task) => taskLine(task, plan.timeZone)),
+          ...more(open.length),
+        ]
+      : ["- No open tasks."]),
+    "",
+    "Your scheduled jobs:",
+    ...(jobs.length ? jobs.map(jobLine) : ["- No scheduled jobs."]),
+    "",
+    ...PLANNING_RULES,
+    ...(plan.coordinator ? COORDINATOR_PLANNING_RULES : []),
+  ]
+  if (plan.coordinator) {
+    const handles = new Map(plan.bots.map((item) => [item.id, item.handle]))
+    const team = plan.tasks
+      .filter((task) => task.botID !== bot.id && task.status !== "done" && handles.has(task.botID))
+      .sort(taskOrder)
+    lines.push(
+      "",
+      "Team board (other bots' open tasks):",
+      ...(team.length
+        ? [
+            ...team
+              .slice(0, PROMPT_TASKS)
+              .map((task) => taskLine(task, plan.timeZone, `@${handles.get(task.botID)} · `)),
+            ...more(team.length),
+          ]
+        : ["- No open tasks."]),
+    )
+  }
+  return lines
+}
+
+const buildSystemPrompt = (bot: StoredBot, plan: PlanData) =>
   [
     `You are "${bot.name}" (@${bot.handle}), a bot in Bots for OpenCode.`,
     "",
@@ -473,9 +756,12 @@ const buildSystemPrompt = (bot: StoredBot) =>
     "Bot mentions:",
     "- When the user's current message mentions another bot with @handle, call the bots_send tool with the target handle and the message to send.",
     "- Only call bots_send when the user's current message includes a bot mention. Never call it on your own.",
+    "- A scheduled job or task reminder counts as the current message: when its text mentions a bot with @handle, you may contact that bot.",
     ...FROM_BOT_RULES,
     "",
     ...LEARNING_RULES,
+    "",
+    ...planSection(bot, plan),
     "",
     ...memorySection(bot, "you"),
   ].join("\n")
@@ -497,6 +783,9 @@ export default Plugin.define({
 
     await mkdir(workspace, { recursive: true })
 
+    // Jobs default to the machine's zone, and bare wake times are read in it.
+    const timeZone = localTimeZone()
+
     let store: Store = {
       version: 1,
       model: null,
@@ -504,6 +793,8 @@ export default Plugin.define({
       groups: [],
       commands: [],
       skills: [],
+      tasks: [],
+      jobs: [],
       coordinatorID: "",
     }
     let storeStamp = ""
@@ -540,6 +831,8 @@ export default Plugin.define({
         groups?: Array<Record<string, unknown>>
         commands?: unknown
         skills?: unknown
+        tasks?: unknown
+        jobs?: unknown
         coordinatorID?: unknown
       }
       const bots = Array.isArray(parsed.bots)
@@ -589,6 +882,8 @@ export default Plugin.define({
         groups: groups.map(storedGroup),
         commands: cleanCommands(parsed.commands, validBot),
         skills,
+        tasks: cleanTasks(parsed.tasks, validBot),
+        jobs: cleanJobs(parsed.jobs, validBot, timeZone),
         coordinatorID: String(coordinatorID),
       }
       return (
@@ -597,6 +892,8 @@ export default Plugin.define({
         !("groups" in parsed) ||
         !("commands" in parsed) ||
         !("skills" in parsed) ||
+        !("tasks" in parsed) ||
+        !("jobs" in parsed) ||
         !("coordinatorID" in parsed) ||
         bots.some((bot) => "model" in bot) ||
         parsed.coordinatorID !== coordinatorID ||
@@ -645,6 +942,18 @@ export default Plugin.define({
     const findGroup = (id: string) => store.groups.find((group) => group.id === id)
     const findGroupBySession = (sessionID: string) =>
       store.groups.find((group) => group.sessionID === sessionID)
+    const findBotByHandle = (handle: string) => {
+      const clean = handle.trim().replace(/^@+/, "").toLowerCase()
+      return store.bots.find((bot) => bot.handle === clean)
+    }
+
+    const planFor = (bot: StoredBot): PlanData => ({
+      tasks: store.tasks,
+      jobs: store.jobs,
+      bots: store.bots,
+      coordinator: bot.id === store.coordinatorID,
+      timeZone,
+    })
 
     type Messages = Awaited<ReturnType<typeof ctx.session.context>>
 
@@ -663,6 +972,26 @@ export default Plugin.define({
         )
         .filter(Boolean)
         .at(-1) ?? ""
+
+    type Trigger = Extract<Messages[number], { type: "user" | "synthetic" }>
+
+    /** The message that started the current run: the user's, or a scheduled job's or task's. */
+    const triggerOf = (messages: Messages) =>
+      messages.findLast(
+        (item): item is Trigger =>
+          item.type === "user" ||
+          (item.type === "synthetic" &&
+            (typeof item.metadata?.botsJob === "string" ||
+              typeof item.metadata?.botsTask === "string")),
+      )
+
+    const scheduledBy = (trigger: Trigger) => {
+      const { botsJob, botsTask } = trigger.metadata ?? {}
+      return {
+        job: store.jobs.find((item) => item.id === botsJob),
+        task: store.tasks.find((item) => item.id === botsTask),
+      }
+    }
 
     /** The bot speaking in a session: the bot itself, or a group's host. */
     const sourceFor = (sessionID: string) => {
@@ -861,7 +1190,10 @@ export default Plugin.define({
           files: await listSkillFiles(skill.id),
         })),
       ),
+      tasks: store.tasks.map(toTaskView),
+      jobs: store.jobs.map(toJobView),
       coordinatorID: store.coordinatorID,
+      timeZone,
     })
 
     const appliesTo = (item: { scope: LibraryScope; botIDs: string[] }, botID: string) =>
@@ -1304,7 +1636,7 @@ export default Plugin.define({
     const contextHook = await ctx.session.hook("context", async (event) => {
       await refreshStore()
       const { bot, group, source } = sourceFor(event.sessionID)
-      if (bot) event.system.push({ type: "text", text: buildSystemPrompt(bot) })
+      if (bot) event.system.push({ type: "text", text: buildSystemPrompt(bot, planFor(bot)) })
       if (group && source)
         event.system.push({ type: "text", text: buildGroupPrompt(group, source) })
       if (source) {
@@ -1327,7 +1659,15 @@ export default Plugin.define({
       // a session that is not a bot or group, and bots_create a non-coordinator.
       if (!source || source.id !== store.coordinatorID) delete event.tools.bots_create
       if (bot || group) return
-      for (const name of ["bots_send", "bots_skill", "bots_memory", "bots_role", "bots_command"]) {
+      for (const name of [
+        "bots_send",
+        "bots_skill",
+        "bots_memory",
+        "bots_role",
+        "bots_command",
+        "bots_task",
+        "bots_job",
+      ]) {
         delete event.tools[name]
       }
     })
@@ -1363,12 +1703,20 @@ export default Plugin.define({
 
       try {
         const messages = await ctx.session.context({ sessionID: event.sessionID })
-        const lastUser = messages.findLast((item) => item.type === "user")
-        // Bot-to-bot and group-member turns stay inside the app.
-        if (!lastUser || lastUser.metadata?.fromBot || lastUser.metadata?.fromGroup) return
-        const text = replyText(messages, lastUser.time.created).replace(/\s+/g, " ")
+        const trigger = triggerOf(messages)
+        if (!trigger) return
+        let title = `${bot?.name ?? group?.name} finished`
+        if (trigger.type === "synthetic") {
+          const { job, task } = scheduledBy(trigger)
+          if (job && !job.notify) return
+          title = `${bot?.name ?? group?.name}: ${job?.name ?? task?.title ?? "Scheduled run"}`
+        } else if (trigger.metadata?.fromBot || trigger.metadata?.fromGroup) {
+          // Bot-to-bot and group-member turns stay inside the app.
+          return
+        }
+        const text = replyText(messages, trigger.time.created).replace(/\s+/g, " ")
         void sendPush({
-          title: `${bot?.name ?? group?.name} finished`,
+          title,
           body: !text
             ? "The job is finished."
             : text.length > 160
@@ -1861,6 +2209,451 @@ export default Plugin.define({
       }
     }
 
+    /** Creates or updates a task. Shared by the Settings board and bots_task; throws readable errors. */
+    const saveTaskRecord = (input: TaskInput, author: string) => {
+      const bot = findBot(input.botID)
+      if (!bot) throw new Error("That task's bot no longer exists.")
+      const title = cleanLibraryText(input.title, MAX_TASK_TITLE)
+      if (!title) throw new Error("A task needs a title.")
+      const existing = input.id ? store.tasks.find((task) => task.id === input.id) : undefined
+      if (input.id && !existing) throw new Error(`No task with id "${input.id}".`)
+      const status = cleanTaskStatus(input.status)
+      if (!existing || existing.botID !== bot.id) {
+        if (!existing && store.tasks.length >= MAX_TASKS) {
+          throw new Error(`There are already ${MAX_TASKS} tasks. Delete finished ones first.`)
+        }
+        const open = store.tasks.filter((task) => task.botID === bot.id && task.status !== "done")
+        if (status !== "done" && open.length >= MAX_OPEN_TASKS_PER_BOT) {
+          throw new Error(`${bot.name} already has ${MAX_OPEN_TASKS_PER_BOT} open tasks.`)
+        }
+      }
+      const now = Date.now()
+      const task: StoredTask = existing ?? {
+        id: shortID((id) => store.tasks.some((item) => item.id === id)),
+        botID: bot.id,
+        title,
+        notes: "",
+        status,
+        wakeAt: 0,
+        author,
+        createdAt: now,
+        updatedAt: now,
+        doneAt: 0,
+      }
+      task.botID = bot.id
+      task.title = title
+      task.notes = cleanLibraryText(input.notes, MAX_TASK_NOTES)
+      task.doneAt =
+        status !== "done" ? 0 : task.status === "done" && task.doneAt ? task.doneAt : now
+      task.status = status
+      task.wakeAt = status === "done" ? 0 : cleanCount(input.wakeAt)
+      task.updatedAt = now
+      if (!existing) store.tasks.push(task)
+      return task
+    }
+
+    /** Creates or updates a job. Shared by the Settings jobs list and bots_job; throws readable errors. */
+    const saveJobRecord = (input: JobInput, author: string) => {
+      const bot = findBot(input.botID)
+      if (!bot) throw new Error("That job's bot no longer exists.")
+      const name = cleanLibraryText(input.name, MAX_JOB_NAME)
+      if (!name) throw new Error("A job needs a name.")
+      const prompt = cleanLibraryText(input.prompt, MAX_JOB_PROMPT)
+      if (!prompt) throw new Error("A job needs a prompt.")
+      const cron = input.cron.trim().replace(/\s+/g, " ")
+      const zone = input.timeZone.trim() || timeZone
+      validateSchedule(cron, zone)
+      const existing = input.id ? store.jobs.find((job) => job.id === input.id) : undefined
+      if (input.id && !existing) throw new Error(`No job with id "${input.id}".`)
+      if (!existing && store.jobs.length >= MAX_JOBS) {
+        throw new Error(`There are already ${MAX_JOBS} jobs. Delete one first.`)
+      }
+      const now = Date.now()
+      const rescheduled =
+        !existing ||
+        existing.cron !== cron ||
+        existing.timeZone !== zone ||
+        existing.enabled !== input.enabled ||
+        !existing.nextRunAt
+      const job: StoredJob = existing ?? {
+        id: shortID((id) => store.jobs.some((item) => item.id === id)),
+        botID: bot.id,
+        name,
+        prompt,
+        cron,
+        timeZone: zone,
+        enabled: input.enabled,
+        notify: input.notify,
+        author,
+        createdAt: now,
+        updatedAt: now,
+        nextRunAt: 0,
+        lastRunAt: 0,
+        runs: 0,
+      }
+      Object.assign(job, {
+        botID: bot.id,
+        name,
+        prompt,
+        cron,
+        timeZone: zone,
+        enabled: input.enabled,
+        notify: input.notify,
+        updatedAt: now,
+      })
+      if (rescheduled || !job.enabled) job.nextRunAt = jobNextRun(job, now)
+      if (!existing) store.jobs.push(job)
+      return job
+    }
+
+    /** Removes the bot's tasks and jobs when it is deleted. */
+    const dropSchedule = (botID: string) => {
+      store.tasks = store.tasks.filter((task) => task.botID !== botID)
+      store.jobs = store.jobs.filter((job) => job.botID !== botID)
+    }
+
+    const jobTrigger = (job: StoredJob, dueAt: number) =>
+      [
+        `Scheduled job "${job.name}" · ${describeCron(job.cron)}${dueAt ? ` · was due ${formatTime(dueAt, job.timeZone)}` : ""}`,
+        "",
+        job.prompt,
+        "",
+        `(Sent automatically by job ${job.id} at ${formatTime(Date.now(), job.timeZone)}. The user did not just write this and may not be watching: do the work and reply with a short result.)`,
+      ].join("\n")
+
+    const taskTrigger = (task: StoredTask) =>
+      [
+        `Task reminder: "${task.title}" · ${TASK_STATUS_LABEL[task.status]}`,
+        ...(task.notes ? ["", task.notes] : []),
+        "",
+        `(Sent automatically at ${formatTime(Date.now(), timeZone)} because task ${task.id} reached its wake time. Act on it now, then update it with bots_task: mark it done, or snooze it with a new wake time. If it needs the user, say so in your reply.)`,
+      ].join("\n")
+
+    /**
+     * Wakes a bot in its own session. A synthetic message shows as a system note
+     * rather than a user bubble, and it queues behind any run in progress.
+     */
+    const wakeBot = async (bot: StoredBot, text: string, metadata: Record<string, string>) => {
+      const sessionID = await ensureSession(bot)
+      await ctx.session.synthetic({
+        sessionID,
+        text,
+        description: text.split("\n", 1)[0],
+        metadata,
+        delivery: "queue",
+        resume: true,
+      })
+    }
+
+    const runJob = async (job: StoredJob, dueAt = 0) => {
+      const bot = findBot(job.botID)
+      if (!bot) throw new Error("That job's bot no longer exists.")
+      await wakeBot(bot, jobTrigger(job, dueAt), { botsJob: job.id })
+    }
+
+    let ticking = false
+    let lastPrune = 0
+
+    /**
+     * Fires due jobs and task wake-ups. Each is recorded and saved before the
+     * bot is woken, so a restart mid-tick cannot fire the same run twice. A job
+     * missed while OpenCode was not running fires once, marked late.
+     */
+    const tick = async () => {
+      if (ticking) return
+      ticking = true
+      try {
+        await refreshStore()
+        const now = Date.now()
+        const due: Array<{ label: string; run: () => Promise<void> }> = []
+        let changed = false
+
+        for (const job of store.jobs) {
+          if (!job.enabled) continue
+          if (!job.nextRunAt) {
+            job.nextRunAt = jobNextRun(job, now)
+            changed ||= job.nextRunAt > 0
+            continue
+          }
+          if (job.nextRunAt > now) continue
+          const dueAt = now - job.nextRunAt > LATE_RUN_MS ? job.nextRunAt : 0
+          job.lastRunAt = now
+          job.runs += 1
+          job.nextRunAt = jobNextRun(job, now)
+          changed = true
+          const snapshot = { ...job }
+          due.push({ label: `job ${job.id}`, run: () => runJob(snapshot, dueAt) })
+        }
+
+        for (const task of store.tasks) {
+          if (task.status === "done" || !task.wakeAt || task.wakeAt > now) continue
+          const bot = findBot(task.botID)
+          if (!bot) continue
+          const text = taskTrigger(task)
+          task.wakeAt = 0
+          task.updatedAt = now
+          changed = true
+          due.push({
+            label: `task ${task.id}`,
+            run: () => wakeBot(bot, text, { botsTask: task.id }),
+          })
+        }
+
+        if (now - lastPrune > PRUNE_MS) {
+          lastPrune = now
+          const before = store.tasks.length
+          store.tasks = store.tasks.filter(
+            (task) => task.status !== "done" || now - task.doneAt < DONE_TASK_TTL_MS,
+          )
+          changed ||= store.tasks.length !== before
+        }
+
+        if (!changed) return
+        await save()
+        await emitChanged("schedule")
+        for (const item of due) {
+          try {
+            await item.run()
+          } catch (error) {
+            console.error(`[opencode-bots] could not run ${item.label}`, error)
+          }
+        }
+      } catch (error) {
+        console.error("[opencode-bots] schedule tick failed", error)
+      } finally {
+        ticking = false
+      }
+    }
+
+    /** Resolves the bot a task or job tool call acts on, enforcing coordinator-only delegation. */
+    const ownerFor = (source: StoredBot, handle: unknown, current?: string) => {
+      if (typeof handle !== "string" || !handle.trim()) {
+        return { bot: current ? findBot(current) : source }
+      }
+      const bot = findBotByHandle(handle)
+      if (!bot) {
+        const handles = store.bots.map((item) => `@${item.handle}`).join(", ")
+        return { error: `Error: no bot has the handle ${handle}. Available bots: ${handles}.` }
+      }
+      if (bot.id !== source.id && source.id !== store.coordinatorID) {
+        return { error: "Error: only the coordinator can manage another bot's tasks and jobs." }
+      }
+      return { bot }
+    }
+
+    const canManage = (source: StoredBot, botID: string) =>
+      botID === source.id || source.id === store.coordinatorID
+
+    const handleOf = (botID: string) => `@${findBot(botID)?.handle ?? "unknown"}`
+
+    const nowLine = () => `Current time: ${formatTime(Date.now(), timeZone)} (${timeZone}).`
+
+    const describeTask = (task: StoredTask) =>
+      `[${task.id}] ${handleOf(task.botID)} · ${TASK_STATUS_LABEL[task.status]}: ${task.title}${task.wakeAt ? ` (wakes ${formatTime(task.wakeAt, timeZone)})` : ""}`
+
+    const describeJob = (job: StoredJob) =>
+      `[${job.id}] ${handleOf(job.botID)} · ${job.name}: ${describeCron(job.cron)} (${job.timeZone})${!job.enabled ? ", paused" : job.nextRunAt ? `, next ${formatTime(job.nextRunAt, job.timeZone)}` : ", never runs again"}`
+
+    const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+    const errorText = (error: unknown) => `Error: ${messageOf(error)}`
+
+    const manageTasks = async (source: StoredBot, input: unknown) => {
+      const args = input as {
+        action?: unknown
+        id?: unknown
+        bot?: unknown
+        title?: unknown
+        notes?: unknown
+        status?: unknown
+        wake?: unknown
+      }
+      const action =
+        args.action === "list" || args.action === "delete" || args.action === "save"
+          ? args.action
+          : ""
+      if (!action) return { content: 'Error: action must be "list", "save", or "delete".' }
+      const coordinator = source.id === store.coordinatorID
+
+      if (action === "list") {
+        const all = coordinator && args.bot === "all"
+        const owner = all ? undefined : ownerFor(source, args.bot)
+        if (owner && "error" in owner) return { content: owner.error }
+        const tasks = store.tasks
+          .filter((task) => all || task.botID === owner?.bot?.id)
+          .sort(taskOrder)
+        const open = tasks.filter((task) => task.status !== "done")
+        const done = tasks
+          .filter((task) => task.status === "done")
+          .sort((a, b) => b.doneAt - a.doneAt)
+          .slice(0, 10)
+        return {
+          content: [
+            nowLine(),
+            "",
+            "Open tasks:",
+            ...(open.length ? open.map((task) => `- ${describeTask(task)}`) : ["- None."]),
+            "",
+            "Recently done:",
+            ...(done.length ? done.map((task) => `- ${describeTask(task)}`) : ["- None."]),
+          ].join("\n"),
+        }
+      }
+
+      const id = typeof args.id === "string" ? args.id.trim() : ""
+      const existing = id ? store.tasks.find((task) => task.id === id) : undefined
+      if (id && !existing) return { content: `Error: no task with id "${id}".` }
+      if (existing && !canManage(source, existing.botID)) {
+        return { content: "Error: only the coordinator can manage another bot's tasks." }
+      }
+
+      if (action === "delete") {
+        if (!existing) return { content: "Error: id is required to delete a task." }
+        store.tasks = store.tasks.filter((task) => task.id !== existing.id)
+        await save()
+        await emitChanged("schedule")
+        return { content: `Deleted task [${existing.id}] "${existing.title}".` }
+      }
+
+      const owner = ownerFor(source, args.bot, existing?.botID)
+      if ("error" in owner) return { content: owner.error }
+      if (!owner.bot) return { content: "Error: that task's bot no longer exists." }
+      const now = Date.now()
+      let wakeAt = existing?.wakeAt ?? 0
+      if (typeof args.wake === "string") {
+        if (!args.wake.trim()) {
+          wakeAt = 0
+        } else {
+          try {
+            wakeAt = parseWakeTime(args.wake, now, timeZone)
+          } catch (error) {
+            return { content: errorText(error) }
+          }
+          if (wakeAt < now - 60_000) {
+            return {
+              content: `Error: ${formatTime(wakeAt, timeZone)} is in the past. ${nowLine()}`,
+            }
+          }
+        }
+      }
+      try {
+        const task = saveTaskRecord(
+          {
+            id: existing?.id,
+            botID: owner.bot.id,
+            title: typeof args.title === "string" ? args.title : (existing?.title ?? ""),
+            notes: typeof args.notes === "string" ? args.notes : (existing?.notes ?? ""),
+            status:
+              typeof args.status === "string"
+                ? cleanTaskStatus(args.status)
+                : (existing?.status ?? "todo"),
+            wakeAt,
+          },
+          source.id,
+        )
+        await save()
+        await emitChanged("schedule")
+        return {
+          content: `${existing ? "Updated" : "Created"} task ${describeTask(task)}.${task.wakeAt ? "" : " No wake time."} ${nowLine()}`,
+        }
+      } catch (error) {
+        return { content: errorText(error) }
+      }
+    }
+
+    const manageJobs = async (source: StoredBot, input: unknown) => {
+      const args = input as {
+        action?: unknown
+        id?: unknown
+        bot?: unknown
+        name?: unknown
+        prompt?: unknown
+        cron?: unknown
+        timezone?: unknown
+        enabled?: unknown
+        notify?: unknown
+      }
+      const action =
+        args.action === "list" ||
+        args.action === "save" ||
+        args.action === "delete" ||
+        args.action === "run"
+          ? args.action
+          : ""
+      if (!action) return { content: 'Error: action must be "list", "save", "delete", or "run".' }
+      const coordinator = source.id === store.coordinatorID
+
+      if (action === "list") {
+        const all = coordinator && args.bot === "all"
+        const owner = all ? undefined : ownerFor(source, args.bot)
+        if (owner && "error" in owner) return { content: owner.error }
+        const jobs = store.jobs.filter((job) => all || job.botID === owner?.bot?.id)
+        return {
+          content: [
+            nowLine(),
+            "",
+            "Scheduled jobs:",
+            ...(jobs.length
+              ? jobs.map((job) => `- ${describeJob(job)}\n  Prompt: ${oneLine(job.prompt, 300)}`)
+              : ["- None."]),
+          ].join("\n"),
+        }
+      }
+
+      const id = typeof args.id === "string" ? args.id.trim() : ""
+      const existing = id ? store.jobs.find((job) => job.id === id) : undefined
+      if (id && !existing) return { content: `Error: no job with id "${id}".` }
+      if (existing && !canManage(source, existing.botID)) {
+        return { content: "Error: only the coordinator can manage another bot's jobs." }
+      }
+
+      if (action === "delete" || action === "run") {
+        if (!existing) return { content: `Error: id is required to ${action} a job.` }
+        if (action === "delete") {
+          store.jobs = store.jobs.filter((job) => job.id !== existing.id)
+          await save()
+          await emitChanged("schedule")
+          return { content: `Deleted job [${existing.id}] "${existing.name}".` }
+        }
+        existing.lastRunAt = Date.now()
+        existing.runs += 1
+        await save()
+        await emitChanged("schedule")
+        // Queued: it runs in the job's bot session after the current reply.
+        void runJob({ ...existing }).catch((error) =>
+          console.error(`[opencode-bots] could not run job ${existing.id}`, error),
+        )
+        return {
+          content: `Queued a run of [${existing.id}] "${existing.name}" in ${handleOf(existing.botID)}'s conversation. It starts after the current reply.`,
+        }
+      }
+
+      const owner = ownerFor(source, args.bot, existing?.botID)
+      if ("error" in owner) return { content: owner.error }
+      if (!owner.bot) return { content: "Error: that job's bot no longer exists." }
+      try {
+        const job = saveJobRecord(
+          {
+            id: existing?.id,
+            botID: owner.bot.id,
+            name: typeof args.name === "string" ? args.name : (existing?.name ?? ""),
+            prompt: typeof args.prompt === "string" ? args.prompt : (existing?.prompt ?? ""),
+            cron: typeof args.cron === "string" ? args.cron : (existing?.cron ?? ""),
+            timeZone:
+              typeof args.timezone === "string" ? args.timezone : (existing?.timeZone ?? timeZone),
+            enabled: typeof args.enabled === "boolean" ? args.enabled : (existing?.enabled ?? true),
+            notify: typeof args.notify === "boolean" ? args.notify : (existing?.notify ?? true),
+          },
+          source.id,
+        )
+        await save()
+        await emitChanged("schedule")
+        return { content: `${existing ? "Updated" : "Created"} job ${describeJob(job)}.` }
+      } catch (error) {
+        return { content: errorText(error) }
+      }
+    }
+
     const toolTransform = await ctx.tool.transform((editor) => {
       editor.namespace({ name: "bots", description: "Bot messaging and bot library tools" })
       editor.add({
@@ -1905,13 +2698,15 @@ export default Plugin.define({
             return { content: `Error: @${target.handle} is not a member of ${group.name}.` }
           }
 
+          // A scheduled job or task reminder routes like the user's own message.
           const messages = await ctx.session.context({ sessionID: context.sessionID })
-          const lastUser = [...messages].reverse().find((item) => item.type === "user")
-          if (!lastUser) return { content: "Error: no user message to route." }
+          const trigger = triggerOf(messages)
+          if (!trigger) return { content: "Error: no user message to route." }
           if (
-            lastUser.metadata &&
-            typeof lastUser.metadata === "object" &&
-            "fromBot" in lastUser.metadata
+            trigger.type === "user" &&
+            trigger.metadata &&
+            typeof trigger.metadata === "object" &&
+            "fromBot" in trigger.metadata
           ) {
             return {
               content:
@@ -1921,9 +2716,9 @@ export default Plugin.define({
 
           const escaped = target.handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
           const mention = new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:])`, "i")
-          if (!mention.test(lastUser.text)) {
+          if (!mention.test(trigger.text)) {
             return {
-              content: `Error: the user's current message does not mention @${target.handle}, so it cannot be contacted.`,
+              content: `Error: the ${trigger.type === "user" ? "user's current message" : "scheduled message"} does not mention @${target.handle}, so it cannot be contacted.`,
             }
           }
 
@@ -2165,6 +2960,108 @@ export default Plugin.define({
       })
 
       editor.add({
+        name: "task",
+        options: { namespace: "bots" },
+        description:
+          "Keep your task board: list, create, update, or delete tasks (To do, In progress, Done). A task can have a wake time: when it arrives, you receive a task reminder in your conversation, so you can follow up without being asked. Snooze a task by giving it a new wake time. Only the coordinator can manage other bots' tasks, by passing bot.",
+        input: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["list", "save", "delete"],
+              description:
+                "list to see tasks; save to create (no id) or update (with id) a task; delete to remove one.",
+            },
+            id: { type: "string", description: "Existing task id, to update or delete it." },
+            bot: {
+              type: "string",
+              description:
+                'Coordinator only: the handle of the bot that owns the task. Defaults to you. For list, "all" shows every bot\'s tasks.',
+            },
+            title: { type: "string", description: "Short task title." },
+            notes: {
+              type: "string",
+              description: "Details, context, or progress notes. Replaces the current notes.",
+            },
+            status: {
+              type: "string",
+              enum: ["todo", "doing", "done"],
+              description: "To do, in progress, or done. New tasks default to todo.",
+            },
+            wake: {
+              type: "string",
+              description:
+                'When to remind the task\'s bot: a duration from now ("45m", "2h", "3d", "1w"), a local time ("2026-11-09 09:00"; a bare date means 09:00), or an ISO timestamp with an offset. An empty string clears it. Omit to keep the current wake time.',
+            },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        execute: async (input, context) => {
+          await refreshStore()
+          const { source } = sourceFor(context.sessionID)
+          if (!source)
+            return { content: "Error: bots_task is only available in a bot or group session." }
+          return manageTasks(source, input)
+        },
+      })
+
+      editor.add({
+        name: "job",
+        options: { namespace: "bots" },
+        description:
+          "Manage scheduled jobs: prompts that run automatically on a cron schedule in a bot's own conversation. Use this only when the user asks for something to happen repeatedly. Each run posts the job's prompt as an automatic message, and the bot replies to it. Jobs can run at most every 5 minutes. Only the coordinator can manage other bots' jobs, by passing bot.",
+        input: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["list", "save", "delete", "run"],
+              description:
+                "list to see jobs; save to create (no id) or update (with id) a job; delete to remove one; run to queue a run now.",
+            },
+            id: { type: "string", description: "Existing job id, to update, delete, or run it." },
+            bot: {
+              type: "string",
+              description:
+                'Coordinator only: the handle of the bot that runs the job. Defaults to you. For list, "all" shows every bot\'s jobs.',
+            },
+            name: { type: "string", description: "Short job name, such as Morning briefing." },
+            prompt: {
+              type: "string",
+              description:
+                "The instructions sent to the bot on every run. Write them so they make sense on their own.",
+            },
+            cron: {
+              type: "string",
+              description:
+                'Five-field cron expression (minute hour day-of-month month day-of-week), such as "0 9 * * 1-5" for weekdays at 09:00, or a macro such as "@daily".',
+            },
+            timezone: {
+              type: "string",
+              description: "IANA time zone for the schedule. Defaults to the machine's time zone.",
+            },
+            enabled: { type: "boolean", description: "false pauses the job. Defaults to true." },
+            notify: {
+              type: "boolean",
+              description:
+                "Send the user a push notification when a run finishes. Defaults to true.",
+            },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        execute: async (input, context) => {
+          await refreshStore()
+          const { source } = sourceFor(context.sessionID)
+          if (!source)
+            return { content: "Error: bots_job is only available in a bot or group session." }
+          return manageJobs(source, input)
+        },
+      })
+
+      editor.add({
         name: "create",
         options: { namespace: "bots" },
         description:
@@ -2235,7 +3132,7 @@ export default Plugin.define({
           const chief = await createBot({
             name: "Chief",
             color: DEFAULT_COLORS[0],
-            role: "You are Chief, the coordinator of this workspace. You can create new bots with the bots_create tool, and you help the user organise and delegate work across bots.",
+            role: "You are Chief, the coordinator of this workspace. You can create new bots with the bots_create tool, you keep the team's task board with bots_task, and you help the user organise, delegate, and follow up on work across bots.",
             memory: [],
           })
           store.coordinatorID = chief.id
@@ -2318,6 +3215,7 @@ export default Plugin.define({
         }
 
         if (store.coordinatorID === bot.id) store.coordinatorID = ""
+        dropSchedule(bot.id)
 
         await save()
         await emitChanged(bot.id)
@@ -2488,6 +3386,66 @@ export default Plugin.define({
         await emitChanged("skills")
         return result
       },
+      saveTask: async (input, context) => {
+        await refreshStore()
+        try {
+          saveTaskRecord(input as TaskInput, "")
+        } catch (error) {
+          return context.error("invalid", messageOf(error), null)
+        }
+        await save()
+        await emitChanged("schedule")
+        return toState()
+      },
+      removeTask: async (input, context) => {
+        await refreshStore()
+        const { id } = input as { id: string }
+        if (!store.tasks.some((task) => task.id === id)) {
+          return context.error("invalid", "That task no longer exists.", null)
+        }
+        store.tasks = store.tasks.filter((task) => task.id !== id)
+        await save()
+        await emitChanged("schedule")
+        return toState()
+      },
+      saveJob: async (input, context) => {
+        await refreshStore()
+        try {
+          saveJobRecord(input as JobInput, "")
+        } catch (error) {
+          return context.error("invalid", messageOf(error), null)
+        }
+        await save()
+        await emitChanged("schedule")
+        return toState()
+      },
+      removeJob: async (input, context) => {
+        await refreshStore()
+        const { id } = input as { id: string }
+        if (!store.jobs.some((job) => job.id === id)) {
+          return context.error("invalid", "That job no longer exists.", null)
+        }
+        store.jobs = store.jobs.filter((job) => job.id !== id)
+        await save()
+        await emitChanged("schedule")
+        return toState()
+      },
+      runJob: async (input, context) => {
+        await refreshStore()
+        const { id } = input as { id: string }
+        const job = store.jobs.find((item) => item.id === id)
+        if (!job) return context.error("invalid", "That job no longer exists.", null)
+        job.lastRunAt = Date.now()
+        job.runs += 1
+        await save()
+        try {
+          await runJob(job)
+        } catch (error) {
+          return context.error("invalid", messageOf(error), null)
+        }
+        await emitChanged("schedule")
+        return toState()
+      },
       revokeDevices: async () => {
         // The web host re-reads remote.json when its mtime moves, so rotating the
         // secret signs every paired device out without a restart. Push
@@ -2515,11 +3473,15 @@ export default Plugin.define({
 
     await archiveStaleSkills(true)
 
+    void tick()
+    const scheduleTimer = setInterval(() => void tick(), SCHEDULE_TICK_MS)
+
     console.log(
-      `[opencode-bots] workspace loaded ${store.bots.length} bot(s), ${store.groups.length} group(s), ${store.commands.length} command(s), ${store.skills.length} skill(s) from ${storePath} for ${workspace}`,
+      `[opencode-bots] workspace loaded ${store.bots.length} bot(s), ${store.groups.length} group(s), ${store.commands.length} command(s), ${store.skills.length} skill(s), ${store.tasks.length} task(s), ${store.jobs.length} job(s) from ${storePath} for ${workspace}`,
     )
 
     return async () => {
+      clearInterval(scheduleTimer)
       await Promise.allSettled([
         contextHook.dispose(),
         promptHook.dispose(),

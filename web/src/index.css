@@ -2195,9 +2195,18 @@ select {
   gap: 18px;
   padding: 0 20px;
   border-bottom: 1px solid var(--border);
+  /* Seven tabs overflow a phone's width: scroll them sideways. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.library-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .library-tab {
+  flex-shrink: 0;
+  white-space: nowrap;
   height: 40px;
   padding: 0;
   border: 0;
@@ -2777,6 +2786,314 @@ select {
   .library-archived-row {
     align-items: flex-start;
     flex-wrap: wrap;
+  }
+}
+
+/* Tasks and jobs */
+
+.planner-toolbar-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.planner-filter {
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.planner-filter:focus {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.planner-bot {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.planner-bot > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-muted {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.planner-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 530;
+  white-space: nowrap;
+}
+
+.planner-pill.due {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.planner-wake {
+  display: flex;
+  gap: 8px;
+}
+
+.planner-wake input {
+  flex: 1;
+}
+
+.task-form,
+.job-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task-form .checkbox-field,
+.job-form .checkbox-field {
+  margin-top: 0;
+}
+
+.planner-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.planner-form-actions .danger-button {
+  margin-right: auto;
+}
+
+.mono-input {
+  font-family: var(--font-mono);
+}
+
+.task-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.task-column {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.task-column .library-group-title {
+  margin: 0 0 2px;
+}
+
+.task-column .library-card {
+  margin: 0;
+  background: var(--bg);
+}
+
+.task-column-empty {
+  margin: 0;
+  padding: 10px 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.task-card.done strong {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--faint);
+}
+
+.task-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-card-main strong {
+  font-size: 12.5px;
+  font-weight: 530;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.task-card-notes {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.task-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-card-move {
+  margin-left: auto;
+}
+
+.task-card-move:disabled {
+  opacity: 0.4;
+}
+
+.job-card.paused {
+  opacity: 0.7;
+}
+
+.job-card-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.job-card-title strong {
+  font-size: 13px;
+  font-weight: 530;
+}
+
+.job-card-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.job-card-schedule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.job-card-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.job-card .skill-meta {
+  margin: 0;
+}
+
+.scheduled-note {
+  align-self: center;
+  width: min(100%, 520px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-deep);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.scheduled-note summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.scheduled-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.scheduled-note-kind {
+  flex-shrink: 0;
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.scheduled-note-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduled-note-time {
+  flex-shrink: 0;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.scheduled-note-body {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .planner-toolbar-actions {
+    justify-content: flex-end;
+  }
+
+  .task-board {
+    grid-template-columns: 1fr;
+  }
+
+  .job-card .library-card-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

@@ -46,6 +46,35 @@ replies; mention a member with `@handle` and the host routes the message to it.
 Each member's reply appears as its own bubble. Only members can be contacted
 from a group.
 
+## Tasks and jobs
+
+See every bot's tasks and jobs in the app's **Settings → Tasks** and
+**Settings → Jobs**, filter them by bot, and edit them there; changes apply
+immediately.
+
+- **Tasks** are each bot's board: **To do**, **In progress**, and **Done**.
+  Bots keep it current with `bots_task`, recording follow-ups and work they
+  promised to do later. Open tasks appear in the bot's instructions, so it
+  always knows what's pending.
+- **Wake times.** A task can have a wake time. When it arrives, the bot gets a
+  task reminder in its own chat and acts on it, then marks the task done or
+  snoozes it with a new wake time. Bots accept `45m`, `2h`, `3d`, a local time
+  such as `2026-11-09 09:00` (a bare date means 09:00), or an ISO timestamp.
+- **Jobs** post a prompt into a bot's chat on a cron schedule (five fields, such
+  as `0 9 * * 1-5`, or a macro such as `@daily`), in a time zone that defaults
+  to your machine's. Bots create them with `bots_job` only when you ask for
+  something recurring. **Run now** queues a run at once; a job can run at most
+  every 5 minutes. Pause a job to keep it without running it.
+- **The coordinator** sees every bot's open tasks and can assign tasks and
+  schedule jobs for any bot; other bots manage only their own.
+- **Automatic messages.** Job runs and task reminders appear in the chat as a
+  collapsible note, not as your message. They queue behind a reply in progress,
+  and a prompt that mentions `@handle` may delegate to that bot.
+- **While OpenCode is off**, nothing runs. A job that was due runs once when the
+  service is back, marked late; overdue tasks wake their bots at once.
+- **Limits.** 50 open tasks per bot, 300 tasks, and 50 jobs. Done tasks are
+  removed after 30 days. Deleting a bot deletes its tasks and jobs.
+
 ## Commands and skills
 
 Manage both in the app's **Settings**, or ask a bot to create them.
@@ -91,7 +120,8 @@ settings page.
 In the app, open **Settings → Remote → Notifications** and tap **Enable
 notifications**. Each device opts in separately; **Send test** checks delivery.
 
-- You're notified when a bot or group you messaged finishes. Bot-to-bot and
+- You're notified when a bot or group you messaged finishes, and when a job run
+  or task reminder does (each job can turn this off). Bot-to-bot and
   group-member replies stay quiet, background work is allowed to finish first,
   and failed runs don't notify. Tapping a notification opens the conversation.
 - It's standard Web Push with keys generated on your machine: no Apple Developer
@@ -121,7 +151,7 @@ opencode plugin remove opencode-bots
 ```text
 ~/Bots for OpenCode/                    bot and group sessions' location (empty)
 ~/.local/share/opencode/bots/
-├── bots.json      bots, groups, model, memory, commands, skill index, coordinator
+├── bots.json      bots, groups, model, memory, commands, skill index, tasks, jobs, coordinator
 ├── skills/        skill directories
 ├── remote.json    tunnel hostname + pairing secret (0600)
 ├── push.json      Web Push keys, internal notify secret, subscriptions (0600)

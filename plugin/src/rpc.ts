@@ -120,13 +120,74 @@ export type ModelOption = {
   readonly name: string
 }
 
+export type TaskStatus = "todo" | "doing" | "done"
+
+export type TaskView = {
+  readonly id: string
+  readonly botID: string
+  readonly title: string
+  readonly notes: string
+  readonly status: TaskStatus
+  /** When the task wakes its bot; 0 means no wake time. */
+  readonly wakeAt: number
+  /** The bot that created the task, or "" when the user did. */
+  readonly author: string
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly doneAt: number
+}
+
+export type TaskInput = {
+  readonly id?: string
+  readonly botID: string
+  readonly title: string
+  readonly notes: string
+  readonly status: TaskStatus
+  readonly wakeAt: number
+}
+
+export type JobView = {
+  readonly id: string
+  readonly botID: string
+  readonly name: string
+  readonly prompt: string
+  readonly cron: string
+  readonly timeZone: string
+  readonly enabled: boolean
+  /** Send a push notification when a run finishes. */
+  readonly notify: boolean
+  /** The bot that created the job, or "" when the user did. */
+  readonly author: string
+  readonly createdAt: number
+  readonly updatedAt: number
+  /** 0 when paused or when the expression never matches again. */
+  readonly nextRunAt: number
+  readonly lastRunAt: number
+  readonly runs: number
+}
+
+export type JobInput = {
+  readonly id?: string
+  readonly botID: string
+  readonly name: string
+  readonly prompt: string
+  readonly cron: string
+  readonly timeZone: string
+  readonly enabled: boolean
+  readonly notify: boolean
+}
+
 export type BotsState = {
   readonly model: ModelRef | null
   readonly bots: readonly BotView[]
   readonly groups: readonly GroupView[]
   readonly commands: readonly CommandView[]
   readonly skills: readonly SkillView[]
+  readonly tasks: readonly TaskView[]
+  readonly jobs: readonly JobView[]
   readonly coordinatorID: string
+  /** The machine's time zone: the default for new jobs and bare wake times. */
+  readonly timeZone: string
 }
 
 export type EnsureSessionOutput = { readonly sessionID: string }
@@ -378,6 +439,117 @@ const skillInput = {
   additionalProperties: false,
 } as const
 
+const taskStatus = {
+  type: "string",
+  enum: ["todo", "doing", "done"],
+} as const
+
+const task = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    botID: { type: "string" },
+    title: { type: "string" },
+    notes: { type: "string" },
+    status: taskStatus,
+    wakeAt: { type: "number" },
+    author: { type: "string" },
+    createdAt: { type: "number" },
+    updatedAt: { type: "number" },
+    doneAt: { type: "number" },
+  },
+  required: [
+    "id",
+    "botID",
+    "title",
+    "notes",
+    "status",
+    "wakeAt",
+    "author",
+    "createdAt",
+    "updatedAt",
+    "doneAt",
+  ],
+  additionalProperties: false,
+} as const
+
+const taskInput = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    botID: { type: "string" },
+    title: { type: "string" },
+    notes: { type: "string" },
+    status: taskStatus,
+    wakeAt: { type: "number" },
+  },
+  required: ["botID", "title", "notes", "status", "wakeAt"],
+  additionalProperties: false,
+} as const
+
+const job = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    botID: { type: "string" },
+    name: { type: "string" },
+    prompt: { type: "string" },
+    cron: { type: "string" },
+    timeZone: { type: "string" },
+    enabled: { type: "boolean" },
+    notify: { type: "boolean" },
+    author: { type: "string" },
+    createdAt: { type: "number" },
+    updatedAt: { type: "number" },
+    nextRunAt: { type: "number" },
+    lastRunAt: { type: "number" },
+    runs: { type: "number" },
+  },
+  required: [
+    "id",
+    "botID",
+    "name",
+    "prompt",
+    "cron",
+    "timeZone",
+    "enabled",
+    "notify",
+    "author",
+    "createdAt",
+    "updatedAt",
+    "nextRunAt",
+    "lastRunAt",
+    "runs",
+  ],
+  additionalProperties: false,
+} as const
+
+const jobInput = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    botID: { type: "string" },
+    name: { type: "string" },
+    prompt: { type: "string" },
+    cron: { type: "string" },
+    timeZone: { type: "string" },
+    enabled: { type: "boolean" },
+    notify: { type: "boolean" },
+  },
+  required: ["botID", "name", "prompt", "cron", "timeZone", "enabled", "notify"],
+  additionalProperties: false,
+} as const
+
+/** A readable validation failure: the app shows its message as-is. */
+const invalid = { invalid: { type: "null" } } as const
+
+const byID = {
+  type: "object",
+  properties: { id: { type: "string" } },
+  required: ["id"],
+  additionalProperties: false,
+} as const
+
 const state = {
   type: "object",
   properties: {
@@ -386,9 +558,22 @@ const state = {
     groups: { type: "array", items: group },
     commands: { type: "array", items: command },
     skills: { type: "array", items: skill },
+    tasks: { type: "array", items: task },
+    jobs: { type: "array", items: job },
     coordinatorID: { type: "string" },
+    timeZone: { type: "string" },
   },
-  required: ["model", "bots", "groups", "commands", "skills", "coordinatorID"],
+  required: [
+    "model",
+    "bots",
+    "groups",
+    "commands",
+    "skills",
+    "tasks",
+    "jobs",
+    "coordinatorID",
+    "timeZone",
+  ],
   additionalProperties: false,
 } as const
 
@@ -602,6 +787,31 @@ export const BotsRpc = Rpc.define({
         required: ["ok", "files"],
         additionalProperties: false,
       },
+    },
+    saveTask: {
+      input: taskInput,
+      output: state,
+      errors: invalid,
+    },
+    removeTask: {
+      input: byID,
+      output: state,
+      errors: invalid,
+    },
+    saveJob: {
+      input: jobInput,
+      output: state,
+      errors: invalid,
+    },
+    removeJob: {
+      input: byID,
+      output: state,
+      errors: invalid,
+    },
+    runJob: {
+      input: byID,
+      output: state,
+      errors: invalid,
     },
     revokeDevices: {
       input: empty,

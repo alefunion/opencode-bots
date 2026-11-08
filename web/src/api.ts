@@ -5,6 +5,7 @@ import type {
   BotSkill,
   BotsState,
   Group,
+  JobInput,
   ModelOption,
   ModelRef,
   PairingLink,
@@ -13,6 +14,7 @@ import type {
   SessionInfo,
   SkillFile,
   SkillFileContent,
+  TaskInput,
   ToolCall,
   UiMessage,
 } from "./types"
@@ -126,6 +128,11 @@ export const botsApi = {
     }),
   deleteSkillFile: (skillID: string, path: string) =>
     rpc<{ ok: true; files: SkillFile[] }>("deleteSkillFile", { skillID, path }),
+  saveTask: (input: TaskInput) => rpc<BotsState>("saveTask", input),
+  removeTask: (id: string) => rpc<BotsState>("removeTask", { id }),
+  saveJob: (input: JobInput) => rpc<BotsState>("saveJob", input),
+  removeJob: (id: string) => rpc<BotsState>("removeJob", { id }),
+  runJob: (id: string) => rpc<BotsState>("runJob", { id }),
 }
 
 export const remoteApi = {
@@ -276,12 +283,19 @@ function toMessages(messages: readonly SessionMessageInfo[]): UiMessage[] {
     }
 
     if (message.type === "synthetic") {
+      const scheduled =
+        typeof message.metadata?.botsJob === "string"
+          ? "job"
+          : typeof message.metadata?.botsTask === "string"
+            ? "task"
+            : undefined
       output.push({
         id: message.id,
         role: "synthetic",
         text: message.text,
         time: message.time.created,
         tools: [],
+        ...(scheduled ? { scheduled } : {}),
       })
       continue
     }

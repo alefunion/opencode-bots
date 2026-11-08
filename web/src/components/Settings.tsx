@@ -14,6 +14,7 @@ import { Avatar, COLORS } from "./Avatar"
 import { Icon } from "../icons"
 import { CommandsEditor, SkillsEditor } from "./Library"
 import { GroupsEditor } from "./GroupSettings"
+import { JobsEditor, TasksBoard } from "./Planner"
 import { RemotePanel } from "./Remote"
 
 type Draft = {
@@ -24,7 +25,7 @@ type Draft = {
   memory: MemoryEntry[]
 }
 
-export type SettingsTab = "bots" | "groups" | "commands" | "skills" | "remote"
+export type SettingsTab = "bots" | "groups" | "tasks" | "jobs" | "commands" | "skills" | "remote"
 
 const fromBot = (bot: Bot): Draft => ({
   id: bot.id,
@@ -90,6 +91,9 @@ export function Settings({
     ? (currentModel?.providerName ?? currentModel?.providerID ?? state.model.providerID)
     : null
   const draftCount = skills.filter((skill) => (skill.status ?? "active") === "draft").length
+  const openTasks = state.tasks.filter((task) => task.status !== "done").length
+  // Tabs whose changes apply immediately rather than through "Save library".
+  const immediate = tab === "remote" || tab === "tasks" || tab === "jobs"
 
   const modelGroups = useMemo(() => {
     const query = modelQuery.trim().toLowerCase()
@@ -237,7 +241,7 @@ export function Settings({
         <header className="drawer-header">
           <div>
             <h2>Settings</h2>
-            <p>Bots, groups, the shared model, and the command and skill library.</p>
+            <p>Bots, groups, tasks and scheduled jobs, the shared model, and the library.</p>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close settings">
             <Icon name="close" />
@@ -256,6 +260,18 @@ export function Settings({
             onClick={() => setTab("groups")}
           >
             Groups <span>{state.groups.length}</span>
+          </button>
+          <button
+            className={`library-tab${tab === "tasks" ? " active" : ""}`}
+            onClick={() => setTab("tasks")}
+          >
+            Tasks <span>{openTasks}</span>
+          </button>
+          <button
+            className={`library-tab${tab === "jobs" ? " active" : ""}`}
+            onClick={() => setTab("jobs")}
+          >
+            Jobs <span>{state.jobs.length}</span>
           </button>
           <button
             className={`library-tab${tab === "commands" ? " active" : ""}`}
@@ -523,6 +539,10 @@ export function Settings({
             <div className="library-body">
               {tab === "remote" ? (
                 <RemotePanel info={remote} onToast={onToast} />
+              ) : tab === "tasks" ? (
+                <TasksBoard state={state} onRefresh={onRefresh} onToast={onToast} />
+              ) : tab === "jobs" ? (
+                <JobsEditor state={state} onRefresh={onRefresh} onToast={onToast} />
               ) : tab === "commands" ? (
                 <CommandsEditor bots={state.bots} commands={commands} onChange={setCommands} />
               ) : (
@@ -535,14 +555,16 @@ export function Settings({
               )}
             </div>
             <footer className="library-footer">
-              {tab === "remote" ? (
-                <span className="hint">Remote changes apply immediately.</span>
+              {immediate ? (
+                <span className="hint">
+                  {tab === "remote" ? "Remote changes" : "Task and job changes"} apply immediately.
+                </span>
               ) : libraryError ? (
                 <p className="error-text">{libraryError}</p>
               ) : (
                 <span className="hint">Changes apply when you save.</span>
               )}
-              {tab === "remote" ? null : (
+              {immediate ? null : (
                 <div className="library-actions">
                   <button
                     className="primary-button"

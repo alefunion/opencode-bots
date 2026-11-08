@@ -93,7 +93,9 @@ export function Chat({
             return (
               <Fragment key={message.id}>
                 {showDay ? <DaySeparator time={message.time} /> : null}
-                {message.role === "synthetic" ? (
+                {message.role === "synthetic" && message.scheduled ? (
+                  <ScheduledNote message={message} />
+                ) : message.role === "synthetic" ? (
                   <div className="system-note">{message.text}</div>
                 ) : message.role === "user" ? (
                   <div className="message-row user">
@@ -187,6 +189,24 @@ function MemberBubble({ message, bots }: { message: UiMessage; bots: Bot[] }) {
         <span className="bubble-time">{timeLabel(message.time)}</span>
       </div>
     </div>
+  )
+}
+
+/** A job run or task reminder: its first line is the header, the rest is what the bot received. */
+function ScheduledNote({ message }: { message: UiMessage }) {
+  const [header = "", ...rest] = message.text.split("\n")
+  const body = rest.join("\n").trim()
+  return (
+    <details className="scheduled-note">
+      <summary>
+        <span className="scheduled-note-kind">
+          {message.scheduled === "job" ? "Scheduled" : "Reminder"}
+        </span>
+        <span className="scheduled-note-title">{header}</span>
+        <span className="scheduled-note-time">{timeLabel(message.time)}</span>
+      </summary>
+      {body ? <div className="scheduled-note-body">{body}</div> : null}
+    </details>
   )
 }
 

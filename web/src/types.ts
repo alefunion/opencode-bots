@@ -94,13 +94,59 @@ export type Group = {
   updatedAt: number
 }
 
+export type TaskStatus = "todo" | "doing" | "done"
+
+export type Task = {
+  id: string
+  botID: string
+  title: string
+  notes: string
+  status: TaskStatus
+  /** 0 means no wake time. */
+  wakeAt: number
+  author: string
+  createdAt: number
+  updatedAt: number
+  doneAt: number
+}
+
+export type TaskInput = Pick<Task, "botID" | "title" | "notes" | "status" | "wakeAt"> & {
+  id?: string
+}
+
+export type Job = {
+  id: string
+  botID: string
+  name: string
+  prompt: string
+  cron: string
+  timeZone: string
+  enabled: boolean
+  notify: boolean
+  author: string
+  createdAt: number
+  updatedAt: number
+  nextRunAt: number
+  lastRunAt: number
+  runs: number
+}
+
+export type JobInput = Pick<
+  Job,
+  "botID" | "name" | "prompt" | "cron" | "timeZone" | "enabled" | "notify"
+> & { id?: string }
+
 export type BotsState = {
   model: ModelRef | null
   bots: Bot[]
   groups: Group[]
   commands: BotCommand[]
   skills: BotSkill[]
+  tasks: Task[]
+  jobs: Job[]
   coordinatorID: string
+  /** The machine's time zone, the default for new jobs. */
+  timeZone: string
 }
 
 export type ModelOption = {
@@ -139,4 +185,6 @@ export type UiMessage = {
   tools: ToolCall[]
   handle?: string
   files?: MessageFile[]
+  /** Synthetic messages posted by a scheduled job or a task's wake time. */
+  scheduled?: "job" | "task"
 }

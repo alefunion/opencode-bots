@@ -31,6 +31,8 @@ Everything runs on your own computer. No server, no account, no extra bill.
 - **Bots with a job.** A reviewer, a researcher, an ops lead. You set the role.
 - **Bots that team up.** Mention `@someone` and bots pass work to each other.
 - **Group chats.** One bot hosts, the others jump in when called.
+- **Bots that follow up.** Each bot keeps a to-do list and sets itself reminders.
+  Ask for a morning briefing and it shows up every morning.
 - **Your phone.** A fast chat app, with push notifications.
 - **Bots that learn.** They suggest new skills after a job well done. You approve.
 - **Real power.** Every bot is a full OpenCode agent. It can read, write, and run
