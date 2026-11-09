@@ -15,7 +15,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { createHash, randomBytes, randomUUID } from "node:crypto"
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto"
 import { WEB_PORT } from "./port"
 import { acquireWebHost } from "./webhost"
 import {
@@ -77,6 +77,22 @@ const DEFAULT_COLORS = [
   "#3250df",
   "#623be2",
   "#5c5c5c",
+] as const
+// New bots get a random colour from the same iOS palette as the web app's
+// "Random face" button (web/src/face.ts).
+const FACE_COLORS = [
+  "#ff3b30",
+  "#ff9500",
+  "#ffcc00",
+  "#34c759",
+  "#00c7be",
+  "#30b0c7",
+  "#32ade6",
+  "#007aff",
+  "#5856d6",
+  "#af52de",
+  "#ff2d55",
+  "#a2845e",
 ] as const
 const MAX_NAME = 64
 const MAX_HANDLE = 32
@@ -289,6 +305,8 @@ const cleanFace = (value: unknown) =>
   typeof value === "string" && /^[0-9a-f]{8}$/.test(value) ? value : null
 
 const randomFace = () => randomBytes(4).toString("hex")
+
+const randomColor = () => FACE_COLORS[randomInt(FACE_COLORS.length)]!
 
 const cleanRole = (value: unknown) => (typeof value === "string" ? value.slice(0, MAX_ROLE) : "")
 
@@ -2318,18 +2336,12 @@ export default Plugin.define({
       }
       const args = input as {
         name?: unknown
-        color?: unknown
         role?: unknown
       }
       const name = typeof args.name === "string" ? args.name.trim() : ""
       if (!name) return { content: "Error: bot name is required." }
-      const color = cleanColor(
-        typeof args.color === "string"
-          ? args.color
-          : DEFAULT_COLORS[store.bots.length % DEFAULT_COLORS.length],
-      )
       const role = cleanRole(args.role)
-      const bot = await createBot({ name, color, role, memory: [] })
+      const bot = await createBot({ name, color: randomColor(), role, memory: [] })
       return {
         content: `Created bot "${bot.name}" (@${bot.handle}) with its own persistent session.`,
       }
@@ -3492,10 +3504,6 @@ export default Plugin.define({
           type: "object",
           properties: {
             name: { type: "string", description: "Display name for the new bot." },
-            color: {
-              type: "string",
-              description: "Optional six-digit hex colour.",
-            },
             role: {
               type: "string",
               description: "Optional role / system prompt for the new bot.",
@@ -3578,7 +3586,7 @@ export default Plugin.define({
         try {
           const chief = await createBot({
             name: "Chief",
-            color: DEFAULT_COLORS[0],
+            color: randomColor(),
             role: "You are Chief, the coordinator of this workspace. You can create new bots with the bots_create tool, you keep the team's task board with bots_task, and you help the user organise, delegate, and follow up on work across bots.",
             memory: [],
           })
