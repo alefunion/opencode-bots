@@ -442,13 +442,17 @@ export function Settings({
                       </div>
 
                       <label className="field">
-                        <span>Role / system prompt</span>
+                        <span>Role</span>
                         <textarea
                           rows={6}
                           value={draft.role}
                           onChange={(event) => patch({ role: event.currentTarget.value })}
                           placeholder="Describe who this bot is, how it should behave, and what it should care about."
                         />
+                        <small className="hint">
+                          Name, @handle, and the “Your role:” heading are added automatically. Write
+                          only the role itself.
+                        </small>
                       </label>
 
                       <div className="memory-section">

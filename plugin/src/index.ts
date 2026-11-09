@@ -3279,7 +3279,7 @@ export default Plugin.define({
         name: "role",
         options: { namespace: "bots" },
         description:
-          "Replace your own role: the standing instructions that define who you are and how you behave. Use this only when the user asks you to change your role, personality, focus, or standing instructions; never on your own initiative. Pass the complete new role, not a diff; start from your current role and keep what should stay. Use memory for facts, not this tool.",
+          'Replace your own role: the standing instructions that define who you are and how you behave. Use this only when the user asks you to change your role, personality, focus, or standing instructions; never on your own initiative. Pass the complete new role body, not a diff; start from your current role and keep what should stay. Do not include your identity line or a "Your role:" heading; they are added automatically. Use memory for facts, not this tool.',
         input: {
           type: "object",
           properties: {
@@ -3506,7 +3506,8 @@ export default Plugin.define({
             name: { type: "string", description: "Display name for the new bot." },
             role: {
               type: "string",
-              description: "Optional role / system prompt for the new bot.",
+              description:
+                'Optional role body: who the bot is, what it owns, and how it works. Its name, @handle, and the "Your role:" heading are added automatically, so do not include an identity preamble or a full system prompt.',
             },
           },
           required: ["name"],
