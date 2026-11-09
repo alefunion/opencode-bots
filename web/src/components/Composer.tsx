@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { Bot, BotCommand, PromptAttachment } from "../types"
 import { Avatar } from "./Avatar"
 import { Icon } from "../icons"
+import {
+  MAX_RECORDING_MS,
+  canRecord,
+  dictationStatus,
+  record,
+  transcribe,
+  type Recording,
+} from "../dictation"
 
 const MAX_FILES = 10
 const MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -14,6 +22,23 @@ function readDataUrl(file: File): Promise<string> {
     reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "")
     reader.readAsDataURL(file)
   })
+}
+
+const clock = (ms: number) => {
+  const seconds = Math.floor(ms / 1000)
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+}
+
+/** Puts dictated text at `at`, with a space on either side where words would touch. */
+function insertText(text: string, words: string, at: number) {
+  const before = text.slice(0, at)
+  const after = text.slice(at)
+  const lead = before && !/\s$/.test(before) ? " " : ""
+  const trail = after && !/^\s/.test(after) ? " " : ""
+  return {
+    value: `${before}${lead}${words}${trail}${after}`,
+    cursor: (before + lead + words).length,
+  }
 }
 
 /**
@@ -60,6 +85,106 @@ export function Composer({
   const [commandMenu, setCommandMenu] = useState<{ query: string; index: number } | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const [dictation, setDictation] = useState<"off" | "ready">("off")
+  const [voice, setVoice] = useState<"idle" | "starting" | "recording" | "transcribing">("idle")
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [level, setLevel] = useState(0)
+  const [elapsed, setElapsed] = useState(0)
+  const recording = useRef<Recording | null>(null)
+  const insertAt = useRef(0)
+
+  useEffect(() => {
+    if (!canRecord()) return
+    let live = true
+    dictationStatus()
+      .then((status) => live && status.installed && setDictation("ready"))
+      .catch(() => undefined)
+    return () => {
+      live = false
+      recording.current?.cancel()
+      recording.current = null
+    }
+  }, [])
+
+  const cancelDictation = () => {
+    recording.current?.cancel()
+    recording.current = null
+    setVoice("idle")
+    setLevel(0)
+  }
+
+  const startDictation = async () => {
+    setVoiceError(null)
+    setVoice("starting")
+    insertAt.current = area.current?.selectionEnd ?? text.length
+    try {
+      // Checked first so a closed Hex doesn't cost the user a whole recording.
+      const status = await dictationStatus()
+      if (!status.available) throw new Error(status.error || "Hex isn't available.")
+      recording.current = await record(setLevel)
+      setElapsed(0)
+      setVoice("recording")
+    } catch (cause) {
+      recording.current = null
+      setVoice("idle")
+      setVoiceError(
+        cause instanceof DOMException && cause.name === "NotAllowedError"
+          ? "Microphone access is blocked for this site."
+          : cause instanceof Error
+            ? cause.message
+            : "Could not start dictation.",
+      )
+    }
+  }
+
+  const finishDictation = async () => {
+    const current = recording.current
+    if (!current) return
+    recording.current = null
+    setVoice("transcribing")
+    setLevel(0)
+    try {
+      const words = await transcribe(await current.stop())
+      if (!words) throw new Error("No speech was heard.")
+      const at = insertAt.current
+      let cursor = 0
+      setText((value) => {
+        const next = insertText(value, words, Math.min(at, value.length))
+        cursor = next.cursor
+        return next.value
+      })
+      requestAnimationFrame(() => {
+        const element = area.current
+        if (!element) return
+        element.focus()
+        element.setSelectionRange(cursor, cursor)
+      })
+    } catch (cause) {
+      setVoiceError(cause instanceof Error ? cause.message : "Could not transcribe that.")
+    } finally {
+      setVoice("idle")
+    }
+  }
+
+  useEffect(() => {
+    if (voice !== "recording") return
+    const started = Date.now()
+    const timer = setInterval(() => {
+      const ms = Date.now() - started
+      setElapsed(ms)
+      if (ms >= MAX_RECORDING_MS) void finishDictation()
+    }, 250)
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelDictation()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener("keydown", onKey)
+    }
+    // Keyed on `voice` alone: finishDictation reads refs, and rerunning on every
+    // render would restart the clock.
+  }, [voice])
 
   const candidates = useMemo(() => {
     if (!mention) return []
@@ -213,7 +338,7 @@ export function Composer({
 
   const send = () => {
     const value = text.trim()
-    if ((!value && attachments.length === 0) || reading) return
+    if ((!value && attachments.length === 0) || reading || voice !== "idle") return
     onSend(value, attachments)
     setText("")
     setAttachments([])
@@ -279,7 +404,7 @@ export function Composer({
           void addFiles([...event.dataTransfer.files])
         }}
       >
-        {attachments.length > 0 || attachmentError || reading ? (
+        {attachments.length > 0 || attachmentError || voiceError || reading ? (
           <div className="composer-attachments">
             {attachments.map((file) => (
               <div className="composer-attachment" key={file.id}>
@@ -302,6 +427,7 @@ export function Composer({
             ))}
             {reading ? <span className="composer-attachment-reading">Attaching…</span> : null}
             {attachmentError ? <span className="composer-error">{attachmentError}</span> : null}
+            {voiceError ? <span className="composer-error">{voiceError}</span> : null}
           </div>
         ) : null}
         <textarea
@@ -364,10 +490,51 @@ export function Composer({
           >
             <Icon name="plus-sm" size={16} />
           </button>
+          {dictation === "ready" && voice === "recording" ? (
+            <>
+              <button
+                type="button"
+                className="composer-attach"
+                onClick={cancelDictation}
+                title="Discard recording (Esc)"
+                aria-label="Discard recording"
+              >
+                <Icon name="close" size={14} />
+              </button>
+              <button
+                type="button"
+                className="composer-mic recording"
+                style={{ "--level": level } as React.CSSProperties}
+                onClick={() => void finishDictation()}
+                title="Stop and transcribe"
+                aria-label="Stop and transcribe"
+              >
+                <Icon name="stop" size={12} />
+              </button>
+              <span className="composer-voice-time" aria-live="off">
+                {clock(elapsed)}
+              </span>
+            </>
+          ) : dictation === "ready" ? (
+            <button
+              type="button"
+              className={`composer-attach${voice === "idle" ? "" : " busy"}`}
+              onClick={() => void startDictation()}
+              disabled={voice !== "idle"}
+              title={voice === "transcribing" ? "Transcribing…" : "Dictate with Hex"}
+              aria-label={voice === "transcribing" ? "Transcribing" : "Dictate with Hex"}
+            >
+              {voice === "idle" ? (
+                <Icon name="mic" size={16} />
+              ) : (
+                <span className="composer-voice-spinner" />
+              )}
+            </button>
+          ) : null}
           <button
             className="send-button"
             onClick={send}
-            disabled={(!text.trim() && attachments.length === 0) || reading}
+            disabled={(!text.trim() && attachments.length === 0) || reading || voice !== "idle"}
             title="Send"
             aria-label="Send"
           >

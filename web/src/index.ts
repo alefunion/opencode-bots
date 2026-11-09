@@ -6,6 +6,7 @@ import { Service } from "@opencode/client/service"
 import index from "./index.html"
 import { WEB_PORT } from "../../plugin/src/port"
 import { remote } from "./remote"
+import { HexError, MAX_CLIP_BYTES, hexStatus, transcribe } from "./hex"
 import {
   internalAuthorized,
   notify,
@@ -251,6 +252,23 @@ async function api(request: Request): Promise<Response> {
       url: "/",
       tag: "opencode-bots:test",
     })
+  }
+
+  if (path === "/api/transcribe" && request.method === "GET") {
+    return Response.json(await hexStatus(), { headers: { "cache-control": "no-store" } })
+  }
+
+  if (path === "/api/transcribe" && request.method === "POST") {
+    const length = Number(request.headers.get("content-length") ?? 0)
+    if (length > MAX_CLIP_BYTES) return fail("That recording is too long.", 413)
+    const wav = await request.arrayBuffer()
+    if (wav.byteLength > MAX_CLIP_BYTES) return fail("That recording is too long.", 413)
+    try {
+      return Response.json(await transcribe(wav))
+    } catch (cause) {
+      if (cause instanceof HexError) return fail(cause.message, cause.status)
+      return fail("Could not transcribe that", 502, cause)
+    }
   }
 
   if (path === "/api/pair/code" && request.method === "POST") {

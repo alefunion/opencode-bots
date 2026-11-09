@@ -766,6 +766,37 @@ const buildSystemPrompt = (bot: StoredBot, plan: PlanData) =>
     ...memorySection(bot, "you"),
   ].join("\n")
 
+/**
+ * OpenCode unloads a location after an hour without session activity, which
+ * disposes this plugin: the scheduler stops, and once every location is
+ * unloaded the web host stops too, taking the tunnel with it. The bot workspace
+ * opts out in its own project config. A value the user already set is kept.
+ */
+async function keepWorkspaceLoaded(workspace: string) {
+  const path = join(workspace, ".opencode", "opencode.json")
+  let config: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"))
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return
+    config = parsed as Record<string, unknown>
+  } catch (error) {
+    if ((error as { code?: string }).code !== "ENOENT") {
+      console.warn(
+        `[opencode-bots] left ${path} alone: ${error instanceof Error ? error.message : error}`,
+      )
+      return
+    }
+  }
+  const experimental = config.experimental
+  if (experimental !== undefined && (typeof experimental !== "object" || experimental === null))
+    return
+  if (experimental && "location_idle_timeout" in experimental) return
+  config.$schema ??= "https://opencode.ai/config.json"
+  config.experimental = { ...experimental, location_idle_timeout: false }
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, `${JSON.stringify(config, null, 2)}\n`)
+}
+
 export default Plugin.define({
   id: "opencode-bots",
   async setup(ctx) {
@@ -779,6 +810,10 @@ export default Plugin.define({
     // Every location keeps the shared web host alive; only the bot workspace
     // registers the bot tools, hooks, and RPC.
     const releaseWebHost = acquireWebHost({ appDir: APP_DIR, workspace, dataDir })
+    // Any location writes it, so it is in place before the bot workspace loads.
+    await keepWorkspaceLoaded(workspace).catch((error) =>
+      console.warn("[opencode-bots] could not keep the bot workspace loaded", error),
+    )
     if (!isBotWorkspace) return async () => releaseWebHost()
 
     await mkdir(workspace, { recursive: true })

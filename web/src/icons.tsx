@@ -14,6 +14,8 @@ type IconName =
   | "group"
   | "check"
   | "command"
+  | "mic"
+  | "stop"
 
 /**
  * The Bots for OpenCode mark: a speech bubble robot with two eyes and two feet, on a 5 × 5 grid of
@@ -177,6 +179,21 @@ const ICONS: Record<IconName, { viewBox: string; body: ReactNode }> = {
         strokeLinecap="square"
       />
     ),
+  },
+  // Not in the OpenCode set: drawn here on its 20px grid with the same square strokes.
+  mic: {
+    viewBox: "0 0 20 20",
+    body: (
+      <path
+        d="M7.08 2.5H12.92V10.42C12.92 12.03 11.61 13.33 10 13.33C8.39 13.33 7.08 12.03 7.08 10.42V2.5ZM4.17 9.58V10.42C4.17 13.64 6.78 16.25 10 16.25C13.22 16.25 15.83 13.64 15.83 10.42V9.58M10 16.25V18.33"
+        stroke="currentColor"
+        strokeLinecap="square"
+      />
+    ),
+  },
+  stop: {
+    viewBox: "0 0 20 20",
+    body: <rect x="4" y="4" width="12" height="12" rx="1.5" fill="currentColor" />,
   },
 }
 

@@ -23,6 +23,12 @@ restarted within seconds if it exits. It finds the service on its own and needs
 no password. Plugin instances in other locations do nothing else, so classic
 sessions get no bot persona.
 
+OpenCode unloads a location after an hour without session activity, disposing
+its plugin instance; the web app stops when the last instance releases it. So
+every instance makes sure the bot workspace's `.opencode/opencode.json` sets
+`experimental.location_idle_timeout: false` (unless the user set a value), and
+the bot workspace, its scheduler, and the web app stay up while idle.
+
 The bot-workspace plugin runs the task and job schedule itself, checking every
 20 seconds; OpenCode's native schedules are off by default and not exposed to
 plugins. A due job or task wakes its bot with a synthetic message in the bot's
@@ -31,6 +37,16 @@ own session (`delivery: "queue"`, `resume: true`), tagged `botsJob` or
 how notifications are titled, and how `bots_send` treats the scheduled prompt
 as the current message. Each run is saved to `bots.json` before the bot is
 woken, so a restart can't fire it twice.
+
+Dictation borrows the running Hex app instead of loading a speech model of its
+own. The browser records with `MediaRecorder`, decodes the clip, and posts it
+as 16 kHz mono 16-bit WAV to the web app's `/api/transcribe`. The web app reads
+Hex's owner-only discovery file (`~/Library/Application Support/hex/local-api.json`,
+`~/.local/share/hex` on Linux, `HEX_APPLICATION_SUPPORT_DIR` overrides), asks
+`POST /control` for the dictation model and language, and sends the clip to
+Hex's `POST /transcriptions` with them, so Hex runs it on its warm model. A
+`GET /api/transcribe` reports whether Hex is installed and answering, which
+decides whether the composer shows the microphone.
 
 The tunnel reuses the OpenTunnel identity OpenCode itself pairs with (profile
 `default`) and claims its own `bots` route, so the address is stable across
@@ -51,6 +67,8 @@ plugin/src/webhost.ts   runs the web app on OpenCode's Bun runtime
 plugin/src/gui.tsx      Desktop Settings → Bots page
 web/src/index.ts        web app server: pairing, proxy, push, tunnel
 web/src/remote.ts       tunnel connection and pairing cookies
+web/src/hex.ts          dictation: sends clips to the running Hex's local API
+web/src/dictation.ts    browser microphone capture and WAV encoding
 web/src/App.tsx         React app
 web/src/components/     chat, sidebar, and Settings tabs (Planner.tsx: Tasks and Jobs;
                         Requests.tsx: question and permission cards)
@@ -69,6 +87,10 @@ web/src/sw.js           service worker (push, notification clicks)
 - The plugin's notify requests are authorized by a 256-bit internal secret in
   `push.json` (mode `0600`), not by a local-only check.
 - `bots.json` holds roles and memory, not provider credentials.
+- Hex's bearer token is read per request and stays in the web app; the browser
+  only reaches `/api/transcribe`, behind the pairing cookie and origin check
+  like every `/api` route. Clips are held in memory, capped at 60 MB, and never
+  written to disk.
 
 > [!WARNING]
 > A paired device has full use of your OpenCode service, as Desktop does:

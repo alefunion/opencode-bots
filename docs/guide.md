@@ -40,6 +40,17 @@ so you can open them in Desktop too.
   in Desktop.
 - **Attachments.** Use `+` in the composer (or `Cmd`/`Ctrl` + `U`), paste, or
   drag files in: up to 10 files, 10 MB each, 25 MB in total.
+- **Dictation.** With [Hex](https://github.com/anomalyco/hex) running on the
+  computer that runs OpenCode, the composer shows a microphone. Tap it, speak,
+  then tap the red stop button: the words appear where the cursor was, ready to
+  edit and send. `×` or `Escape` discards the recording. It works from your
+  phone too, because that computer does the transcribing, with the model and
+  language selected in Hex (on Linux, Hex's first downloaded model). Clips up
+  to 30 seconds use the copy of the model Hex already has loaded; longer ones
+  make Hex load a second copy for a while. Recordings stop at 10 minutes and are
+  never saved. The text is what was heard, without Hex's Output processing
+  (corrections, transformations, rewriting). The microphone is hidden if Hex
+  has never run on that computer.
 - **Deleting a bot** deletes its OpenCode session, as in Desktop. If that fails,
   the bot is kept so no session is orphaned. A bot that hosts a group can't be
   deleted until the group has another host.
@@ -157,7 +168,8 @@ opencode plugin remove opencode-bots
 ## Data and backups
 
 ```text
-~/Bots for OpenCode/                    bot and group sessions' location (empty)
+~/Bots for OpenCode/                    bot and group sessions' location
+└── .opencode/opencode.json             keeps the location loaded while idle
 ~/.local/share/opencode/bots/
 ├── bots.json      bots, groups, model, memory, commands, skill index, tasks, jobs, coordinator
 ├── skills/        skill directories
@@ -189,6 +201,19 @@ tail -100 ~/.local/share/opencode/log/opencode.log
 ```
 
 The web app needs port `49384` free on `127.0.0.1`.
+
+**The app goes unreachable after a while idle.** OpenCode unloads a location
+after an hour without session activity, and the web app stops once every
+location is unloaded. The plugin sets `experimental.location_idle_timeout` to
+`false` in `~/Bots for OpenCode/.opencode/opencode.json` so the bot workspace
+stays loaded, which also keeps tasks and jobs firing. It leaves the setting
+alone if you already chose a value there; delete the key to get the default
+back.
+
+**Dictation says Hex isn't running.** Open Hex on the computer that runs
+OpenCode (`hex start`) and finish its setup, so its model is downloaded;
+`hex status` should list the model as installed. If the browser says microphone access is blocked, allow it
+for the app's address in the browser's site settings.
 
 **The address never appears in Settings → Bots.** On first start the app
 creates its tunnel address, which needs a connection to `opentunnel.xyz`. Check
