@@ -194,6 +194,28 @@ export function Settings({
     }
   }
 
+  const clearConversation = async () => {
+    if (!draft?.id) return
+    if (
+      !confirm(
+        `Clear the conversation with ${draft.name}? This deletes the current chat history and starts a new session. Role, memory, tasks, jobs, project workers, and group chats are kept. This cannot be undone.`,
+      )
+    )
+      return
+    setSaving(true)
+    setError(null)
+    try {
+      await botsApi.clearConversation(draft.id)
+      await onRefresh()
+      onToast(`Conversation with ${draft.name} cleared`, "success")
+    } catch (cause) {
+      setError(String(cause))
+      onToast("Could not clear the conversation", "error")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const updateModel = async (value: string) => {
     const model: ModelRef | null = value
       ? (() => {
@@ -403,13 +425,22 @@ export function Settings({
                       <div className="editor-title">
                         <h3>{draft.id ? "Edit bot" : "New bot"}</h3>
                         {draft.id ? (
-                          <button
-                            className="danger-button"
-                            onClick={() => void remove()}
-                            disabled={saving}
-                          >
-                            <Icon name="trash" size={15} /> Delete
-                          </button>
+                          <div className="editor-title-actions">
+                            <button
+                              className="secondary-button"
+                              onClick={() => void clearConversation()}
+                              disabled={saving}
+                            >
+                              Clear conversation
+                            </button>
+                            <button
+                              className="danger-button"
+                              onClick={() => void remove()}
+                              disabled={saving}
+                            >
+                              <Icon name="trash" size={15} /> Delete
+                            </button>
+                          </div>
                         ) : null}
                       </div>
 

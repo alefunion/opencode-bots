@@ -102,6 +102,7 @@ export const botsApi = {
     patch: Partial<Omit<Bot, "id" | "handle" | "sessionID" | "createdAt" | "updatedAt">>,
   ) => rpc<Bot>("update", { id, patch }),
   remove: (id: string) => rpc<{ ok: true }>("remove", { id }),
+  clearConversation: (id: string) => rpc<{ ok: true }>("clearConversation", { id }),
   ensureSession: (id: string) => rpc<{ sessionID: string }>("ensureSession", { id }),
   createGroup: (input: Omit<Group, "id" | "sessionID" | "createdAt" | "updatedAt">) =>
     rpc<Group>("createGroup", input),

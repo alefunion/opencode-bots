@@ -3685,6 +3685,22 @@ export default Plugin.define({
         await emitChanged(bot.id)
         return { ok: true as const }
       },
+      clearConversation: async (input) => {
+        await refreshStore()
+        const data = input as { id: string }
+        const bot = findBot(data.id)
+        if (!bot) throw new Error("Bot not found")
+
+        // Removing the session also interrupts a running turn, cancels its
+        // jobs, and deletes subagent children. Keep pointing at the old
+        // session if that fails, as deleting a bot does.
+        await removeSession(bot.sessionID, bot.name)
+        bot.sessionID = ""
+        bot.updatedAt = Date.now()
+        await save()
+        await emitChanged(bot.id)
+        return { ok: true as const }
+      },
       ensureSession: async (input) => {
         await refreshStore()
         const data = input as { id: string }

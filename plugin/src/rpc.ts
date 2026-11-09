@@ -651,6 +651,15 @@ export const BotsRpc = Rpc.define({
         additionalProperties: false,
       },
     },
+    clearConversation: {
+      input: byID,
+      output: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+        additionalProperties: false,
+      },
+    },
     ensureSession: {
       input: {
         type: "object",

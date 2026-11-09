@@ -32,6 +32,11 @@ so you can open them in Desktop too.
   only their own; the new role applies from the next model step. Write only the
   role body: the name, `@handle`, and `Role` heading are added to the system
   prompt automatically, so don't repeat them in the field.
+- **Clear conversation.** In **Settings → Bots**, **Clear conversation** stops a
+  running reply, deletes the bot's current OpenCode session and its history,
+  and starts a fresh session. Role, memory, tasks, jobs,
+  commands, skills, and project workers are kept. Group chats and worker
+  sessions are separate and are not cleared. This cannot be undone.
 - **Coordinator.** Only the coordinator can create bots (`bots_create`). The
   first bot, **Chief** (`@chief`), starts as the coordinator. Choose another in
   **Settings → Bots**; deleting it clears the setting.

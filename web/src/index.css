@@ -1831,6 +1831,7 @@ select {
 
 .editor-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1841,6 +1842,15 @@ select {
   font-size: 14px;
   font-weight: 530;
   letter-spacing: -0.14px;
+}
+
+.editor-title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .field {
