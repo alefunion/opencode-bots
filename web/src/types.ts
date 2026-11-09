@@ -2,10 +2,13 @@ import type { FormInfo, PermissionRequest } from "@opencode/client"
 
 export type { FormField, FormInfo, PermissionRequest } from "@opencode/client"
 
-/** A question form or permission request a bot session is blocked on. */
+/**
+ * A question form or permission request a bot session is blocked on. `worker`
+ * is set when it comes from one of the bot's project workers instead.
+ */
 export type PendingRequest =
-  | { kind: "form"; bot: Bot; form: FormInfo }
-  | { kind: "permission"; bot: Bot; request: PermissionRequest }
+  | { kind: "form"; bot: Bot; form: FormInfo; worker?: Worker }
+  | { kind: "permission"; bot: Bot; request: PermissionRequest; worker?: Worker }
 
 export type FormReply = Record<string, string | number | boolean | string[]>
 
@@ -147,6 +150,18 @@ export type JobInput = Pick<
   "botID" | "name" | "prompt" | "cron" | "timeZone" | "enabled" | "notify"
 > & { id?: string }
 
+/** A top-level OpenCode session a bot opened in a project directory. */
+export type Worker = {
+  id: string
+  botID: string
+  sessionID: string
+  directory: string
+  /** "" when OpenCode titled the session itself. */
+  title: string
+  createdAt: number
+  updatedAt: number
+}
+
 export type BotsState = {
   model: ModelRef | null
   bots: Bot[]
@@ -155,6 +170,7 @@ export type BotsState = {
   skills: BotSkill[]
   tasks: Task[]
   jobs: Job[]
+  workers: Worker[]
   coordinatorID: string
   /** The machine's time zone, the default for new jobs. */
   timeZone: string

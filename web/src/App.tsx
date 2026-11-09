@@ -12,6 +12,7 @@ import type {
   RemoteInfo,
   SessionInfo,
   UiMessage,
+  Worker,
 } from "./types"
 import { syncPushSubscription } from "./push"
 import { Sidebar, type Selection } from "./components/Sidebar"
@@ -46,6 +47,7 @@ export function App() {
     skills: [],
     tasks: [],
     jobs: [],
+    workers: [],
     coordinatorID: "",
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   })
@@ -75,7 +77,7 @@ export function App() {
   const actionsRef = useRef({
     refreshState: async () => {},
     loadMessagesForSession: async (_sessionID: string) => {},
-    refreshPending: async () => {},
+    refreshPending: async (_workers?: Worker[]) => {},
   })
 
   const selectedBot = useMemo(
@@ -108,40 +110,60 @@ export function App() {
     [selectedCommandBot, state.commands],
   )
 
+  /** Project workers by session ID: their requests belong to the bot that owns them. */
+  const workersBySession = useMemo(
+    () => new Map(state.workers.map((worker) => [worker.sessionID, worker])),
+    [state.workers],
+  )
+
   /** Pending questions and permission prompts for a chat, from every session it waits on. */
   const requestsFor = (owners: Map<string, Bot>): PendingRequest[] => [
     ...pending.forms.flatMap((form) => {
       const bot = owners.get(form.sessionID)
-      return bot ? [{ kind: "form" as const, bot, form }] : []
+      const worker = workersBySession.get(form.sessionID)
+      return bot ? [{ kind: "form" as const, bot, form, ...(worker ? { worker } : {}) }] : []
     }),
     ...pending.permissions.flatMap((request) => {
       const bot = owners.get(request.sessionID)
-      return bot ? [{ kind: "permission" as const, bot, request }] : []
+      const worker = workersBySession.get(request.sessionID)
+      return bot
+        ? [{ kind: "permission" as const, bot, request, ...(worker ? { worker } : {}) }]
+        : []
     }),
   ]
 
   // A group's members answer in their own sessions, so their questions block the group too.
+  // A bot's workers ask in their own sessions, so their questions appear in its chats.
   const selectedRequests = useMemo(() => {
     const owners = new Map<string, Bot>()
-    if (selectedBot?.sessionID) owners.set(selectedBot.sessionID, selectedBot)
+    const addBot = (bot: Bot) => {
+      if (bot.sessionID) owners.set(bot.sessionID, bot)
+      for (const worker of state.workers) {
+        if (worker.botID === bot.id) owners.set(worker.sessionID, bot)
+      }
+    }
+    if (selectedBot) addBot(selectedBot)
     if (selectedGroup && selectedHost) {
       owners.set(selectedGroup.sessionID, selectedHost)
       for (const bot of state.bots) {
-        if (bot.sessionID && selectedGroup.memberIDs.includes(bot.id))
-          owners.set(bot.sessionID, bot)
+        if (selectedGroup.memberIDs.includes(bot.id)) addBot(bot)
       }
     }
     return requestsFor(owners)
-  }, [pending, selectedBot, selectedGroup, selectedHost, state.bots])
+  }, [pending, selectedBot, selectedGroup, selectedHost, state.bots, state.workers])
 
-  const waiting = useMemo(
-    () =>
-      new Set([
-        ...pending.forms.map((form) => form.sessionID),
-        ...pending.permissions.map((request) => request.sessionID),
-      ]),
-    [pending],
-  )
+  // A worker's request marks its owner bot's chat as waiting.
+  const waiting = useMemo(() => {
+    const ownerSession = (sessionID: string) => {
+      const worker = workersBySession.get(sessionID)
+      if (!worker) return sessionID
+      return state.bots.find((bot) => bot.id === worker.botID)?.sessionID ?? sessionID
+    }
+    return new Set([
+      ...pending.forms.map((form) => ownerSession(form.sessionID)),
+      ...pending.permissions.map((request) => ownerSession(request.sessionID)),
+    ])
+  }, [pending, state.bots, workersBySession])
 
   const unread = useMemo(() => {
     const result = new Set<string>()
@@ -224,18 +246,18 @@ export function App() {
     })
   }
 
-  const refreshPending = async () => {
+  const refreshPending = async (workers: Worker[] = state.workers) => {
     try {
-      setPending(await requestsApi.list())
+      setPending(await requestsApi.list(workers.map((worker) => worker.directory)))
     } catch {
       // Keep the last list; the next form or permission event refreshes it.
     }
   }
 
   const refreshState = async () => {
-    void refreshPending()
     const next = await botsApi.state()
     setState(next)
+    void refreshPending(next.workers)
     setSelected((current) => {
       if (current) {
         const exists =
@@ -274,7 +296,7 @@ export function App() {
         )
       }
       await loadAllMessages(next.bots, next.groups)
-      void refreshPending()
+      void refreshPending(next.workers)
 
       // A notification opens `/?bot=<id>` or `/?group=<id>`. Otherwise land on
       // the coordinator so the app does not open empty.

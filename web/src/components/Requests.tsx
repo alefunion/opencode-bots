@@ -7,6 +7,7 @@ import type {
   FormReply,
   PendingRequest,
   PermissionRequest,
+  Worker,
 } from "../types"
 import { Avatar } from "./Avatar"
 
@@ -16,12 +17,19 @@ export function Requests({ requests, onDone }: { requests: PendingRequest[]; onD
     <>
       {requests.map((item) =>
         item.kind === "form" ? (
-          <FormCard key={item.form.id} bot={item.bot} form={item.form} onDone={onDone} />
+          <FormCard
+            key={`${item.form.id}:${item.form.sessionID}`}
+            bot={item.bot}
+            form={item.form}
+            worker={item.worker}
+            onDone={onDone}
+          />
         ) : (
           <PermissionCard
-            key={item.request.id}
+            key={`${item.request.id}:${item.request.sessionID}`}
             bot={item.bot}
             request={item.request}
+            worker={item.worker}
             onDone={onDone}
           />
         ),
@@ -32,7 +40,29 @@ export function Requests({ requests, onDone }: { requests: PendingRequest[]; onD
 
 type Draft = { choice: Record<string, string[]>; text: Record<string, string> }
 
-function FormCard({ bot, form, onDone }: { bot: Bot; form: FormInfo; onDone: () => void }) {
+/** Names the project worker a request comes from, so it is not mistaken for the bot's own. */
+function WorkerSource({ worker }: { worker?: Worker }) {
+  if (!worker) return null
+  const name =
+    worker.title || worker.directory.split("/").filter(Boolean).at(-1) || worker.directory
+  return (
+    <p className="request-worker">
+      From project worker <strong>{name}</strong> in <code>{worker.directory}</code>
+    </p>
+  )
+}
+
+function FormCard({
+  bot,
+  form,
+  worker,
+  onDone,
+}: {
+  bot: Bot
+  form: FormInfo
+  worker?: Worker
+  onDone: () => void
+}) {
   const question = form.metadata?.kind === "question"
   const [draft, setDraft] = useState<Draft>(() => initialDraft(form.fields))
   const [busy, setBusy] = useState(false)
@@ -100,6 +130,7 @@ function FormCard({ bot, form, onDone }: { bot: Bot; form: FormInfo; onDone: () 
             {question ? (form.fields.length === 1 ? "question" : "questions") : form.title}
           </span>
         </span>
+        <WorkerSource worker={worker} />
         {shown.map((field) => (
           <fieldset className="request-field" key={field.key} disabled={busy}>
             {field.title ? <legend>{field.title}</legend> : null}
@@ -218,10 +249,12 @@ function FieldInput({
 function PermissionCard({
   bot,
   request,
+  worker,
   onDone,
 }: {
   bot: Bot
   request: PermissionRequest
+  worker?: Worker
   onDone: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -248,6 +281,7 @@ function PermissionCard({
           <span className="bubble-handle">@{bot.handle}</span>
           <span className="bubble-tag">permission</span>
         </span>
+        <WorkerSource worker={worker} />
         <p className="request-question">
           Wants to use <code>{request.action}</code>
           {request.resources.length > 0 ? " on:" : "."}

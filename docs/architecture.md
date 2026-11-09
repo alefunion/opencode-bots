@@ -38,6 +38,27 @@ how notifications are titled, and how `bots_send` treats the scheduled prompt
 as the current message. Each run is saved to `bots.json` before the bot is
 woken, so a restart can't fire it twice.
 
+Project workers are ordinary top-level sessions, not child sessions. `bots_worker`
+calls `session.create` with only a title, `location: { directory }`, and an
+optional agent: no `parentID`, model, or permissions. The session therefore
+belongs to the target location, which loads that project's own config,
+`AGENTS.md`, agents, skills, and MCP servers. The bot-workspace plugin instance
+only knows the session by ID: it prompts it (`delivery: "queue"`), waits on it,
+reads its context, and interrupts or removes it, and its persona and library
+hooks never match it. The plugin instance in the worker's location does nothing
+beyond the web host, as in any other location. `bots.json` keeps only the index
+(`workers`: ID, owner bot, session ID, directory, title); deleting a bot drops
+its entries but leaves the sessions.
+
+Questions and permission prompts are listed per location, so the web app asks
+the bot workspace and every unique worker directory (`form.list`,
+`permission.request.list`, settled independently and deduplicated by ID and
+session), then shows a worker's requests in its owner bot's chat. Answers go by
+session ID, which works from any location. For notifications the bot-workspace
+plugin subscribes to the global `form.created` and `permission.asked` events and
+pushes those whose session is a worker to `/?bot=<owner>`; bot and group
+questions are left to the `question` tool hook, so nothing is sent twice.
+
 Dictation borrows the running Hex app instead of loading a speech model of its
 own. The web app reads Hex's owner-only discovery file
 (`~/Library/Application Support/hex/local-api.json`, `~/.local/share/hex` on

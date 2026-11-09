@@ -177,6 +177,18 @@ export type JobInput = {
   readonly notify: boolean
 }
 
+/** A top-level session a bot opened in a project directory. */
+export type WorkerView = {
+  readonly id: string
+  readonly botID: string
+  readonly sessionID: string
+  readonly directory: string
+  /** "" when OpenCode titles the session itself. */
+  readonly title: string
+  readonly createdAt: number
+  readonly updatedAt: number
+}
+
 export type BotsState = {
   readonly model: ModelRef | null
   readonly bots: readonly BotView[]
@@ -185,6 +197,7 @@ export type BotsState = {
   readonly skills: readonly SkillView[]
   readonly tasks: readonly TaskView[]
   readonly jobs: readonly JobView[]
+  readonly workers: readonly WorkerView[]
   readonly coordinatorID: string
   /** The machine's time zone: the default for new jobs and bare wake times. */
   readonly timeZone: string
@@ -540,6 +553,21 @@ const jobInput = {
   additionalProperties: false,
 } as const
 
+const worker = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    botID: { type: "string" },
+    sessionID: { type: "string" },
+    directory: { type: "string" },
+    title: { type: "string" },
+    createdAt: { type: "number" },
+    updatedAt: { type: "number" },
+  },
+  required: ["id", "botID", "sessionID", "directory", "title", "createdAt", "updatedAt"],
+  additionalProperties: false,
+} as const
+
 /** A readable validation failure: the app shows its message as-is. */
 const invalid = { invalid: { type: "null" } } as const
 
@@ -560,6 +588,7 @@ const state = {
     skills: { type: "array", items: skill },
     tasks: { type: "array", items: task },
     jobs: { type: "array", items: job },
+    workers: { type: "array", items: worker },
     coordinatorID: { type: "string" },
     timeZone: { type: "string" },
   },
@@ -571,6 +600,7 @@ const state = {
     "skills",
     "tasks",
     "jobs",
+    "workers",
     "coordinatorID",
     "timeZone",
   ],

@@ -33,6 +33,9 @@ Everything runs on your own computer. No server, no account, no extra bill.
 - **Group chats.** One bot hosts, the others jump in when called.
 - **Bots that follow up.** Each bot keeps a to-do list and sets itself reminders.
   Ask for a morning briefing and it shows up every morning.
+- **Bots that open projects.** A bot can start a real OpenCode session in any of
+  your projects, with that project's own agents and skills. It stays in Desktop,
+  so you can check it and pick up where the bot left off.
 - **Your phone.** A fast chat app, with push notifications.
 - **Bots that learn.** They suggest new skills after a job well done. You approve.
 - **Real power.** Every bot is a full OpenCode agent. It can read, write, and run

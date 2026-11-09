@@ -36,8 +36,9 @@ so you can open them in Desktop too.
   answer. The question appears as a card at the end of the chat, and the chat
   shows **Waiting for your answer** in the sidebar. Pick an option or type your
   own answer, then **Send answer**; **Dismiss** lets the bot carry on without
-  one. A group member's questions appear in the group too. You can also answer
-  in Desktop.
+  one. A group member's questions appear in the group too, and a
+  [project worker](#project-workers)'s appear in its bot's chat, labelled with
+  the worker and its project. You can also answer in Desktop.
 - **Attachments.** Use `+` in the composer (or `Cmd`/`Ctrl` + `U`), paste, or
   drag files in: up to 10 files, 10 MB each, 25 MB in total.
 - **Dictation.** With [Hex](https://github.com/anomalyco/hex) running on the
@@ -56,7 +57,8 @@ so you can open them in Desktop too.
   has never run on that computer.
 - **Deleting a bot** deletes its OpenCode session, as in Desktop. If that fails,
   the bot is kept so no session is orphaned. A bot that hosts a group can't be
-  deleted until the group has another host.
+  deleted until the group has another host. Its project workers' sessions are
+  kept in Desktop; only the bot's list of them goes.
 - **A session deleted elsewhere** is recreated on the next message. The history
   is gone; the role and memory still apply.
 
@@ -95,6 +97,42 @@ immediately.
   service is back, marked late; overdue tasks wake their bots at once.
 - **Limits.** 50 open tasks per bot, 300 tasks, and 50 jobs. Done tasks are
   removed after 30 days. Deleting a bot deletes its tasks and jobs.
+
+## Project workers
+
+A bot can open a worker: an ordinary OpenCode session in one of your project
+directories, created by the bot with `bots_worker`. Ask a bot to "start a
+session in `~/code/app` and fix the failing test", and it does the work there.
+
+- **Visible in Desktop.** A worker is a real top-level session in that project,
+  not a subagent. It shows up in the project's session list in Desktop and the
+  CLI, where you can read it, answer it, and keep going yourself.
+- **The project's own setup.** A worker gets that project's `AGENTS.md`,
+  agents, commands, skills, MCP servers, permissions, and default model, just
+  like a session you start there. It gets none of the bot's role, memory,
+  library skills, model, or bot tools, so the bot briefs it in full.
+- **Actions.** `create` opens a worker in an existing directory (absolute or
+  `~/…`; not the bot workspace), with an optional title, agent from that
+  project, and first message. `send` continues it, `read` returns its latest
+  reply, `status` shows its title, location, agent, model, and whether it is
+  working, `interrupt` stops its current run, `list` shows the bot's workers,
+  and `delete` removes it.
+- **Long work.** With a message, the bot waits up to 2 minutes for the reply.
+  Longer work keeps running; the bot checks back with `read` or `status`, or
+  sends with `wait: false` and moves on. Replies over 12,000 characters are cut
+  short in the bot's chat; the full text is in the session.
+- **Questions and permissions.** When a worker asks something or needs a
+  permission, the card appears in its bot's chat (and any group the bot is in),
+  labelled with the worker and its project, and the chat shows **Waiting for
+  your answer**. You get a notification that opens the bot's chat, so you can
+  answer from your phone.
+- **Who manages what.** A bot manages only its own workers; the coordinator
+  manages everyone's. In a group, the host's workers belong to the host.
+- **Deleting.** Bots delete a worker only when you ask, and `delete` removes the
+  session and its history. Deleting a bot keeps its workers' sessions in
+  Desktop.
+- **Limits.** 25 workers per bot, 100 in total. Titles up to 200 characters,
+  messages up to 20,000.
 
 ## Commands and skills
 
@@ -143,7 +181,8 @@ notifications**. Each device opts in separately; **Send test** checks delivery.
 
 - You're notified when a bot or group you messaged finishes, and when a job run
   or task reminder does (each job can turn this off), and when a bot asks you
-  a question (including from a job or another bot). Bot-to-bot and
+  a question (including from a job or another bot) or one of its project
+  workers asks a question or needs a permission. Bot-to-bot and
   group-member replies stay quiet, background work is allowed to finish first,
   and failed runs don't notify. Tapping a notification opens the conversation.
 - It's standard Web Push with keys generated on your machine: no Apple Developer
@@ -174,7 +213,7 @@ opencode plugin remove opencode-bots
 ~/Bots for OpenCode/                    bot and group sessions' location
 └── .opencode/opencode.json             keeps the location loaded while idle
 ~/.local/share/opencode/bots/
-├── bots.json      bots, groups, model, memory, commands, skill index, tasks, jobs, coordinator
+├── bots.json      bots, groups, model, memory, commands, skill index, tasks, jobs, worker index, coordinator
 ├── skills/        skill directories
 ├── remote.json    tunnel hostname + pairing secret (0600)
 ├── push.json      Web Push keys, internal notify secret, subscriptions (0600)
@@ -183,8 +222,9 @@ opencode plugin remove opencode-bots
 
 `$XDG_DATA_HOME` replaces `~/.local/share` when set. Installs from before the
 rename keep using `~/OpenCode Bots`, because their bot sessions belong to it.
-Conversations themselves are in OpenCode's database,
-`~/.local/share/opencode/opencode.db`.
+Conversations themselves, project workers' sessions included, are in OpenCode's
+database, `~/.local/share/opencode/opencode.db`; `bots.json` only records which
+sessions are whose workers.
 
 To back up, copy the whole `bots/` directory; `bots.json` alone doesn't include
 skill files. Without `remote.json` every device must pair again; without

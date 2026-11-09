@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { randomBytes, randomUUID } from "node:crypto"
 import { WEB_PORT } from "./port"
@@ -41,6 +41,7 @@ import {
   type TaskInput,
   type TaskStatus,
   type TaskView,
+  type WorkerView,
 } from "./rpc"
 import {
   describeCron,
@@ -111,6 +112,11 @@ const PROMPT_TASKS = 30
 const SCHEDULE_TICK_MS = 20_000
 const LATE_RUN_MS = 2 * 60 * 1000
 const PRUNE_MS = 60 * 60 * 1000
+const MAX_WORKERS = 100
+const MAX_WORKERS_PER_BOT = 25
+const MAX_WORKER_TITLE = 200
+const MAX_WORKER_MESSAGE = 20_000
+const MAX_WORKER_READ = 12_000
 
 type StoredMemory = {
   id: string
@@ -206,6 +212,21 @@ type StoredJob = {
   runs: number
 }
 
+/**
+ * A top-level OpenCode session a bot opened in a project directory. The session
+ * itself lives in OpenCode's database; this is only the bot's index of it.
+ */
+type StoredWorker = {
+  id: string
+  botID: string
+  sessionID: string
+  directory: string
+  /** The title given at creation; "" lets OpenCode title the session. */
+  title: string
+  createdAt: number
+  updatedAt: number
+}
+
 type Store = {
   version: 1
   model: ModelRef | null
@@ -215,6 +236,7 @@ type Store = {
   skills: StoredSkill[]
   tasks: StoredTask[]
   jobs: StoredJob[]
+  workers: StoredWorker[]
   coordinatorID: string
 }
 
@@ -469,6 +491,42 @@ const cleanJobs = (
   return output
 }
 
+const cleanWorkers = (value: unknown, validBot: (id: string) => boolean): StoredWorker[] => {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const sessions = new Set<string>()
+  const perBot = new Map<string, number>()
+  const output: StoredWorker[] = []
+  for (const item of value) {
+    if (output.length >= MAX_WORKERS) break
+    if (!item || typeof item !== "object") continue
+    const record = item as Record<string, unknown>
+    const botID = typeof record.botID === "string" ? record.botID : ""
+    const sessionID = typeof record.sessionID === "string" ? record.sessionID.trim() : ""
+    const directory = typeof record.directory === "string" ? record.directory.trim() : ""
+    if (!validBot(botID) || !sessionID || !isAbsolute(directory) || sessions.has(sessionID))
+      continue
+    const count = perBot.get(botID) ?? 0
+    if (count >= MAX_WORKERS_PER_BOT) continue
+    const id = cleanItemID(record.id) || shortID((taken) => seen.has(taken))
+    if (seen.has(id)) continue
+    seen.add(id)
+    sessions.add(sessionID)
+    perBot.set(botID, count + 1)
+    const createdAt = cleanCount(record.createdAt) || Date.now()
+    output.push({
+      id,
+      botID,
+      sessionID,
+      directory: resolve(directory),
+      title: cleanLibraryText(record.title, MAX_WORKER_TITLE),
+      createdAt,
+      updatedAt: cleanCount(record.updatedAt) || createdAt,
+    })
+  }
+  return output
+}
+
 /** The next run after `after`, or 0 when the job is paused or never runs again. */
 const jobNextRun = (job: Pick<StoredJob, "cron" | "timeZone" | "enabled">, after: number) => {
   if (!job.enabled) return 0
@@ -590,6 +648,8 @@ const toTaskView = (task: StoredTask): TaskView => ({ ...task })
 
 const toJobView = (job: StoredJob): JobView => ({ ...job })
 
+const toWorkerView = (worker: StoredWorker): WorkerView => ({ ...worker })
+
 const storedBot = (raw: Record<string, unknown>): StoredBot => {
   const name = cleanName(raw.name)
   const created = typeof raw.createdAt === "number" ? raw.createdAt : Date.now()
@@ -638,7 +698,7 @@ const memorySection = (bot: StoredBot, owner: string) => [
 // `execute` tool's catalog (for example `tools.bots.memory`). Bots that are only told
 // "call bots_memory" look for a direct tool, find none, and give up.
 const TOOL_NOTE = [
-  "Bot tools: bots_send, bots_memory, bots_role, bots_skill, bots_command, bots_task, bots_job, and bots_create (coordinator only).",
+  "Bot tools: bots_send, bots_memory, bots_role, bots_skill, bots_command, bots_task, bots_job, bots_worker, and bots_create (coordinator only).",
   "If they are not listed as direct tools, they are in the execute tool's catalog (for example `await tools.bots.memory({...})` inside execute). Search the catalog for them before concluding a tool is missing.",
 ]
 
@@ -661,6 +721,14 @@ const PLANNING_RULES = [
   '- Give a task a wake time to be reminded at that moment (wake: "45m", "2h", "3d", or "2026-11-09 09:00"). When a task reminder arrives, act on it, then mark the task done or snooze it with a new wake time.',
   "- Create a scheduled job with bots_job only when the user asks for something to happen repeatedly. Each run posts the job's prompt into your conversation.",
   '- Messages that start with "Scheduled job" or "Task reminder" are automatic: the user did not just write them and may not be watching. Do the work and reply with a short result.',
+]
+
+const WORKER_RULES = [
+  "Project workers:",
+  "- bots_worker opens an independent, classic OpenCode session in a project directory. It is a real top-level session: the user sees it under that project in Desktop and can open and continue it.",
+  "- A worker gets that project's own agents, skills, instructions (AGENTS.md), MCP servers, permissions, and default model. It does not get your role, memory, library skills, or bot tools, so give it everything it needs in the message.",
+  '- Use "send" to continue a worker. For long work, send with wait false (or let a wait time out), then check back with "read" or "status".',
+  '- Use "delete" only when the user asks: it deletes the session and its history.',
 ]
 
 const COORDINATOR_PLANNING_RULES = [
@@ -761,6 +829,8 @@ const buildSystemPrompt = (bot: StoredBot, plan: PlanData) =>
     "",
     ...LEARNING_RULES,
     "",
+    ...WORKER_RULES,
+    "",
     ...planSection(bot, plan),
     "",
     ...memorySection(bot, "you"),
@@ -830,6 +900,7 @@ export default Plugin.define({
       skills: [],
       tasks: [],
       jobs: [],
+      workers: [],
       coordinatorID: "",
     }
     let storeStamp = ""
@@ -868,6 +939,7 @@ export default Plugin.define({
         skills?: unknown
         tasks?: unknown
         jobs?: unknown
+        workers?: unknown
         coordinatorID?: unknown
       }
       const bots = Array.isArray(parsed.bots)
@@ -919,6 +991,7 @@ export default Plugin.define({
         skills,
         tasks: cleanTasks(parsed.tasks, validBot),
         jobs: cleanJobs(parsed.jobs, validBot, timeZone),
+        workers: cleanWorkers(parsed.workers, validBot),
         coordinatorID: String(coordinatorID),
       }
       return (
@@ -929,6 +1002,7 @@ export default Plugin.define({
         !("skills" in parsed) ||
         !("tasks" in parsed) ||
         !("jobs" in parsed) ||
+        !("workers" in parsed) ||
         !("coordinatorID" in parsed) ||
         bots.some((bot) => "model" in bot) ||
         parsed.coordinatorID !== coordinatorID ||
@@ -1227,6 +1301,7 @@ export default Plugin.define({
       ),
       tasks: store.tasks.map(toTaskView),
       jobs: store.jobs.map(toJobView),
+      workers: store.workers.map(toWorkerView),
       coordinatorID: store.coordinatorID,
       timeZone,
     })
@@ -1644,6 +1719,8 @@ export default Plugin.define({
         "",
         ...LEARNING_RULES,
         "",
+        ...WORKER_RULES,
+        "",
         ...memorySection(host, "the host bot"),
       ].join("\n")
     }
@@ -1702,6 +1779,7 @@ export default Plugin.define({
         "bots_command",
         "bots_task",
         "bots_job",
+        "bots_worker",
       ]) {
         delete event.tools[name]
       }
@@ -2689,6 +2767,257 @@ export default Plugin.define({
       }
     }
 
+    type SessionInfo = Awaited<ReturnType<typeof ctx.session.get>>
+
+    /** Waits for a session to finish, up to TARGET_TIMEOUT_MS or until the tool call is cancelled. */
+    const waitForSession = async (sessionID: string, signal: AbortSignal) => {
+      const stop = AbortSignal.any([signal, AbortSignal.timeout(TARGET_TIMEOUT_MS)])
+      return Promise.race([
+        ctx.session.wait({ sessionID }).then(
+          () => "done" as const,
+          () => "error" as const,
+        ),
+        new Promise<"stopped">((resolve) =>
+          stop.addEventListener("abort", () => resolve("stopped"), { once: true }),
+        ),
+      ])
+    }
+
+    const workerLabel = (worker: StoredWorker) =>
+      worker.title || basename(worker.directory) || worker.directory
+
+    const describeWorker = (worker: StoredWorker, withOwner: boolean) =>
+      `[${worker.id}] ${withOwner ? `${handleOf(worker.botID)} · ` : ""}${workerLabel(worker)} — ${worker.directory}`
+
+    /** A running session started an execution after the previous one ended. */
+    const isBusy = (session: SessionInfo) => (session.time.busy ?? 0) > (session.time.idle ?? 0)
+
+    /** Resolves and checks a new worker's project directory; throws readable errors. */
+    const workerDirectory = async (value: unknown) => {
+      const text = typeof value === "string" ? value.trim() : ""
+      if (!text) throw new Error("directory is required to create a worker.")
+      if (text !== "~" && !text.startsWith("~/") && !isAbsolute(text)) {
+        throw new Error(`"${text}" is not an absolute path. Pass an absolute path or one under ~/.`)
+      }
+      const directory =
+        text === "~"
+          ? homedir()
+          : resolve(text.startsWith("~/") ? join(homedir(), text.slice(2)) : text)
+      const info = await stat(directory).catch(() => null)
+      if (!info) throw new Error(`${directory} does not exist.`)
+      if (!info.isDirectory()) throw new Error(`${directory} is not a directory.`)
+      // The bot workspace would load the bot plugin's hooks, so it is no project.
+      const root = resolve(workspace)
+      if (directory === root || directory.startsWith(`${root}/`)) {
+        throw new Error("Workers run in project directories, not in the bot workspace.")
+      }
+      return directory
+    }
+
+    const missingWorker = (worker: StoredWorker) =>
+      `Error: worker [${worker.id}]'s session no longer exists; it may have been deleted in Desktop. Remove the record with action "delete".`
+
+    /** Queues a message in the worker's session and, when asked, waits for its reply. */
+    const promptWorker = async (
+      worker: StoredWorker,
+      message: string,
+      wait: boolean,
+      signal: AbortSignal,
+    ) => {
+      let since: number
+      try {
+        const inbox = await ctx.session.prompt({
+          sessionID: worker.sessionID,
+          text: message,
+          metadata: { botsWorker: worker.id },
+          delivery: "queue",
+        })
+        since = inbox.time.created
+      } catch (error) {
+        return isMissing(error) ? missingWorker(worker) : errorText(error)
+      }
+      worker.updatedAt = Date.now()
+      await save()
+      await emitChanged("workers")
+      if (!wait) {
+        return `Sent to worker [${worker.id}]. It works on its own; check back with action "read" or "status".`
+      }
+      const outcome = await waitForSession(worker.sessionID, signal)
+      if (signal.aborted) return `Cancelled the wait. Worker [${worker.id}] keeps running.`
+      if (outcome === "stopped") {
+        return `Worker [${worker.id}] is still working. Check back later with action "read" or "status".`
+      }
+      if (outcome === "error") {
+        return `Worker [${worker.id}] could not finish. Check it with action "status", or ask the user to open its session in Desktop.`
+      }
+      const reply = replyText(await ctx.session.context({ sessionID: worker.sessionID }), since)
+      return reply
+        ? `Worker [${worker.id}] replied:\n\n${clip(reply)}`
+        : `Worker [${worker.id}] finished without a text reply.`
+    }
+
+    const clip = (text: string) =>
+      text.length > MAX_WORKER_READ
+        ? `${text.slice(0, MAX_WORKER_READ)}\n\n…(${text.length - MAX_WORKER_READ} more characters; the full text is in the session in Desktop)`
+        : text
+
+    const manageWorkers = async (source: StoredBot, input: unknown, signal: AbortSignal) => {
+      const args = input as {
+        action?: unknown
+        id?: unknown
+        directory?: unknown
+        title?: unknown
+        agent?: unknown
+        message?: unknown
+        wait?: unknown
+      }
+      const actions = ["create", "send", "read", "status", "interrupt", "delete", "list"] as const
+      const action = actions.find((item) => item === args.action)
+      if (!action) {
+        return {
+          content: `Error: action must be one of ${actions.map((item) => `"${item}"`).join(", ")}.`,
+        }
+      }
+      const coordinator = source.id === store.coordinatorID
+      const message = typeof args.message === "string" ? args.message.trim() : ""
+      if (message.length > MAX_WORKER_MESSAGE) {
+        return { content: `Error: message is longer than ${MAX_WORKER_MESSAGE} characters.` }
+      }
+      const wait = args.wait !== false
+
+      if (action === "list") {
+        const workers = store.workers.filter((worker) => coordinator || worker.botID === source.id)
+        return {
+          content: [
+            coordinator ? "Workers (all bots):" : "Your workers:",
+            ...(workers.length
+              ? workers.map((worker) => `- ${describeWorker(worker, coordinator)}`)
+              : ["- None."]),
+          ].join("\n"),
+        }
+      }
+
+      if (action === "create") {
+        if (store.workers.length >= MAX_WORKERS) {
+          return { content: `Error: there are already ${MAX_WORKERS} workers. Delete one first.` }
+        }
+        if (
+          store.workers.filter((worker) => worker.botID === source.id).length >= MAX_WORKERS_PER_BOT
+        ) {
+          return {
+            content: `Error: you already have ${MAX_WORKERS_PER_BOT} workers. Delete one you no longer need first.`,
+          }
+        }
+        let directory: string
+        try {
+          directory = await workerDirectory(args.directory)
+        } catch (error) {
+          return { content: errorText(error) }
+        }
+        const title = cleanLibraryText(args.title, MAX_WORKER_TITLE)
+        const agent = typeof args.agent === "string" ? args.agent.trim() : ""
+        // No parentID, model, or permissions: the session takes the project's own.
+        let session: SessionInfo
+        try {
+          session = await ctx.session.create({
+            ...(title ? { title } : {}),
+            location: { directory },
+            ...(agent ? { agent } : {}),
+          })
+        } catch (error) {
+          return { content: errorText(error) }
+        }
+        const now = Date.now()
+        const worker: StoredWorker = {
+          id: shortID((id) => store.workers.some((item) => item.id === id)),
+          botID: source.id,
+          sessionID: session.id,
+          directory,
+          title,
+          createdAt: now,
+          updatedAt: now,
+        }
+        store.workers.push(worker)
+        await save()
+        await emitChanged("workers")
+        const created = `Created worker [${worker.id}] in ${directory}${agent ? ` with agent ${agent}` : ""}. It is a top-level OpenCode session the user can open in Desktop under that project.`
+        if (!message) return { content: `${created} Give it work with action "send".` }
+        return { content: `${created}\n\n${await promptWorker(worker, message, wait, signal)}` }
+      }
+
+      const id = typeof args.id === "string" ? args.id.trim() : ""
+      if (!id) return { content: `Error: id is required to ${action} a worker.` }
+      const worker = store.workers.find((item) => item.id === id)
+      if (!worker) {
+        return { content: `Error: no worker with id "${id}". Use action "list" to see workers.` }
+      }
+      if (!canManage(source, worker.botID)) {
+        return { content: "Error: only the coordinator can manage another bot's workers." }
+      }
+
+      if (action === "send") {
+        if (!message) return { content: "Error: message is required to send to a worker." }
+        return { content: await promptWorker(worker, message, wait, signal) }
+      }
+
+      if (action === "delete") {
+        try {
+          await removeSession(worker.sessionID, `worker ${worker.id}`)
+        } catch (error) {
+          return { content: errorText(error) }
+        }
+        store.workers = store.workers.filter((item) => item.id !== worker.id)
+        await save()
+        await emitChanged("workers")
+        return { content: `Deleted worker [${worker.id}] and its session.` }
+      }
+
+      if (action === "interrupt") {
+        try {
+          await ctx.session.interrupt({ sessionID: worker.sessionID, resume: false })
+        } catch (error) {
+          return { content: isMissing(error) ? missingWorker(worker) : errorText(error) }
+        }
+        return { content: `Interrupted worker [${worker.id}].` }
+      }
+
+      let session: SessionInfo
+      try {
+        session = await ctx.session.get({ sessionID: worker.sessionID })
+      } catch (error) {
+        return { content: isMissing(error) ? missingWorker(worker) : errorText(error) }
+      }
+      const busy = isBusy(session)
+
+      if (action === "read") {
+        const reply = replyText(await ctx.session.context({ sessionID: worker.sessionID }), 0)
+        const note = busy
+          ? `Worker [${worker.id}] is still working; this is its latest reply so far.`
+          : ""
+        if (!reply) {
+          return { content: note || `Worker [${worker.id}] has no text reply yet.` }
+        }
+        return {
+          content: [note, `Worker [${worker.id}]'s latest reply:`, "", clip(reply)]
+            .filter((line, index) => index > 0 || line)
+            .join("\n"),
+        }
+      }
+
+      const model = session.model
+      return {
+        content: [
+          describeWorker(worker, coordinator),
+          `Owner: ${handleOf(worker.botID)}`,
+          `Session title: ${session.title || "(untitled)"}`,
+          `Session location: ${session.location.directory}`,
+          `Agent: ${session.agent ?? "project default"}`,
+          `Model: ${model ? `${model.providerID}/${model.id}${model.variant ? ` (${model.variant})` : ""}` : "project default"}`,
+          `State: ${busy ? "working" : `idle${session.outcome ? `, last run ${session.outcome}` : ""}`}`,
+        ].join("\n"),
+      }
+    }
+
     const toolTransform = await ctx.tool.transform((editor) => {
       editor.namespace({ name: "bots", description: "Bot messaging and bot library tools" })
       editor.add({
@@ -2773,16 +3102,7 @@ export default Plugin.define({
             delivery: "queue",
           })
 
-          const stop = AbortSignal.any([context.signal, AbortSignal.timeout(TARGET_TIMEOUT_MS)])
-          const outcome = await Promise.race([
-            ctx.session.wait({ sessionID: target.sessionID }).then(
-              () => "done" as const,
-              () => "error" as const,
-            ),
-            new Promise<"stopped">((resolve) =>
-              stop.addEventListener("abort", () => resolve("stopped"), { once: true }),
-            ),
-          ])
+          const outcome = await waitForSession(target.sessionID, context.signal)
 
           if (context.signal.aborted) return { content: "Cancelled." }
           if (outcome === "stopped") {
@@ -3097,6 +3417,60 @@ export default Plugin.define({
       })
 
       editor.add({
+        name: "worker",
+        options: { namespace: "bots" },
+        description:
+          "Open and manage project workers: independent, classic OpenCode sessions in a project directory. A worker is a real top-level session, not a subagent; the user sees it under that project in Desktop and can open and continue it. It gets that project's own agents, skills, instructions (AGENTS.md), MCP servers, permissions, and default model, and none of your role, memory, library skills, or bot tools, so write messages that stand on their own. create opens one (optionally with a first message); send continues it; read returns its latest reply; status shows its state; interrupt stops its current run; delete removes the session and its history, only when the user asks; list shows workers. Only the coordinator can manage other bots' workers.",
+        input: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["create", "send", "read", "status", "interrupt", "delete", "list"],
+              description:
+                "create a worker; send it a message; read its latest reply; status of its session; interrupt its current run; delete it and its session; list workers.",
+            },
+            id: {
+              type: "string",
+              description: "Worker id, for every action except create and list.",
+            },
+            directory: {
+              type: "string",
+              description: "For create: the project directory, absolute or starting with ~/.",
+            },
+            title: {
+              type: "string",
+              description: "For create: optional session title. Omit to let OpenCode title it.",
+            },
+            agent: {
+              type: "string",
+              description:
+                "For create: optional agent ID defined in that project. Omit to use the project's default agent.",
+            },
+            message: {
+              type: "string",
+              description:
+                "For create: an optional first message. For send: the message. The worker knows nothing about you or this conversation.",
+            },
+            wait: {
+              type: "boolean",
+              description:
+                "With a message: wait up to 2 minutes for the reply. Defaults to true; pass false for long work and check back with read or status.",
+            },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        execute: async (input, context) => {
+          await refreshStore()
+          const { source } = sourceFor(context.sessionID)
+          if (!source)
+            return { content: "Error: bots_worker is only available in a bot or group session." }
+          return manageWorkers(source, input, context.signal)
+        },
+      })
+
+      editor.add({
         name: "create",
         options: { namespace: "bots" },
         description:
@@ -3276,6 +3650,8 @@ export default Plugin.define({
 
         if (store.coordinatorID === bot.id) store.coordinatorID = ""
         dropSchedule(bot.id)
+        // Only the index goes: worker sessions stay in Desktop for the user.
+        store.workers = store.workers.filter((worker) => worker.botID !== bot.id)
 
         await save()
         await emitChanged(bot.id)
@@ -3536,12 +3912,90 @@ export default Plugin.define({
     void tick()
     const scheduleTimer = setInterval(() => void tick(), SCHEDULE_TICK_MS)
 
+    // A worker runs in another location, so toolGuard never sees its questions.
+    // The global event stream does; bot and group sessions are left to toolGuard.
+    const notified = new Set<string>()
+    const notifyWorkerRequest = async (
+      sessionID: string,
+      key: string,
+      kind: "question" | "permission",
+      text: string,
+    ) => {
+      if (notified.has(key)) return
+      await refreshStore()
+      const worker = store.workers.find((item) => item.sessionID === sessionID)
+      const bot = worker ? findBot(worker.botID) : undefined
+      if (!worker || !bot) return
+      notified.add(key)
+      if (notified.size > 500) notified.delete(notified.values().next().value!)
+      void sendPush({
+        title:
+          kind === "question"
+            ? `${bot.name}'s worker has a question`
+            : `${bot.name}'s worker needs permission`,
+        body: oneLine(`${workerLabel(worker)}: ${text}`, 160),
+        url: `/?bot=${encodeURIComponent(bot.id)}`,
+        tag: `opencode-bots:${sessionID}:${kind}`,
+      })
+    }
+
+    const events = new AbortController()
+    const watchWorkerRequests = async () => {
+      while (!events.signal.aborted) {
+        try {
+          for await (const event of ctx.event.subscribe({
+            types: ["form.created", "permission.asked"],
+            signal: events.signal,
+          })) {
+            try {
+              if (event.type === "form.created") {
+                const { form } = event.data
+                const field = form.fields[0] as { title?: string; description?: string } | undefined
+                await notifyWorkerRequest(
+                  form.sessionID,
+                  `form:${form.id}`,
+                  "question",
+                  field?.description || field?.title || form.title || "Waiting for your answer.",
+                )
+              } else if (event.type === "permission.asked") {
+                const request = event.data
+                await notifyWorkerRequest(
+                  request.sessionID,
+                  `permission:${request.id}`,
+                  "permission",
+                  `wants to use ${request.action}${request.resources.length ? ` on ${request.resources.join(", ")}` : ""}`,
+                )
+              }
+            } catch (error) {
+              console.error("[opencode-bots] could not notify about a worker request", error)
+            }
+          }
+        } catch (error) {
+          if (events.signal.aborted) return
+          console.warn("[opencode-bots] worker request stream stopped; reconnecting", error)
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 5000)
+          events.signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer)
+              resolve()
+            },
+            { once: true },
+          )
+        })
+      }
+    }
+    void watchWorkerRequests()
+
     console.log(
-      `[opencode-bots] workspace loaded ${store.bots.length} bot(s), ${store.groups.length} group(s), ${store.commands.length} command(s), ${store.skills.length} skill(s), ${store.tasks.length} task(s), ${store.jobs.length} job(s) from ${storePath} for ${workspace}`,
+      `[opencode-bots] workspace loaded ${store.bots.length} bot(s), ${store.groups.length} group(s), ${store.commands.length} command(s), ${store.skills.length} skill(s), ${store.tasks.length} task(s), ${store.jobs.length} job(s), ${store.workers.length} worker(s) from ${storePath} for ${workspace}`,
     )
 
     return async () => {
       clearInterval(scheduleTimer)
+      events.abort()
       await Promise.allSettled([
         contextHook.dispose(),
         promptHook.dispose(),

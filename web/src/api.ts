@@ -143,13 +143,38 @@ export const botsApi = {
  * until someone answers them, so the app answers them in the chat itself.
  */
 export const requestsApi = {
-  list: async () => {
-    const location = { directory: await workspace() }
-    const [forms, permissions] = await Promise.all([
-      client.form.list({ location }),
-      client.permission.request.list({ location }),
-    ])
-    return { forms: forms.data, permissions: permissions.data }
+  /**
+   * Lists are per location: the bot workspace, plus each project a worker runs
+   * in. One unreachable location does not hide the others.
+   */
+  list: async (directories: readonly string[] = []) => {
+    const locations = [...new Set([await workspace(), ...directories])].map((directory) => ({
+      directory,
+    }))
+    const results = await Promise.allSettled(
+      locations.flatMap((location) => [
+        client.form.list({ location }).then((result) => ({ forms: result.data })),
+        client.permission.request
+          .list({ location })
+          .then((result) => ({ permissions: result.data })),
+      ]),
+    )
+    if (results.every((result) => result.status === "rejected")) {
+      throw (results[0] as PromiseRejectedResult).reason
+    }
+    const forms = new Map<string, FormInfo>()
+    const permissions = new Map<string, PermissionRequest>()
+    for (const result of results) {
+      if (result.status !== "fulfilled") continue
+      const value = result.value
+      if ("forms" in value) {
+        for (const form of value.forms) forms.set(`${form.id}:${form.sessionID}`, form)
+      } else {
+        for (const request of value.permissions)
+          permissions.set(`${request.id}:${request.sessionID}`, request)
+      }
+    }
+    return { forms: [...forms.values()], permissions: [...permissions.values()] }
   },
   answer: (form: FormInfo, answer: FormReply) =>
     client.session.form.reply({ sessionID: form.sessionID, formID: form.id, answer }),
