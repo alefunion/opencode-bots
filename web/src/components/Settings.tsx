@@ -450,8 +450,8 @@ export function Settings({
                           placeholder="Describe who this bot is, how it should behave, and what it should care about."
                         />
                         <small className="hint">
-                          Name, @handle, and the “Your role:” heading are added automatically. Write
-                          only the role itself.
+                          Name, @handle, and the “Role” heading are added automatically. Write only
+                          the role itself.
                         </small>
                       </label>
 

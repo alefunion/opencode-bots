@@ -839,11 +839,15 @@ const planSection = (bot: StoredBot, plan: PlanData) => {
   return lines
 }
 
+// System parts are joined with a single newline, so the leading blank line
+// keeps this block separate from the instructions part OpenCode writes above.
 const buildSystemPrompt = (bot: StoredBot, plan: PlanData) =>
   [
-    `You are "${bot.name}" (@${bot.handle}), a bot in Bots for OpenCode.`,
     "",
-    "Your role:",
+    "# Bot",
+    `You are "${bot.name}" (@${bot.handle}), a bot in Bots for OpenCode. OpenCode is the harness you run in; the role below defines your job.`,
+    "",
+    "## Role",
     bot.role.trim() || "Be a helpful, concise assistant.",
     "",
     "You have your own persistent OpenCode session. Treat this conversation as continuous.",
@@ -1730,15 +1734,17 @@ export default Plugin.define({
         ? members.map((bot) => `- ${bot.name} (@${bot.handle})`).join("\n")
         : "- No other members."
       return [
-        `You are "${host.name}" (@${host.handle}), the host of the group chat "${group.name}".`,
         "",
-        "Your role:",
+        "# Bot",
+        `You are "${host.name}" (@${host.handle}), the host of the group chat "${group.name}". OpenCode is the harness you run in; the role and group instructions below define your job.`,
+        "",
+        "## Role",
         host.role.trim() || "Be a helpful, concise assistant.",
         "",
-        "Group instructions:",
+        "## Group instructions",
         group.description.trim() || "Coordinate the group and answer the user.",
         "",
-        "Group members:",
+        "## Group members",
         roster,
         "",
         ...TOOL_NOTE,
@@ -3279,7 +3285,7 @@ export default Plugin.define({
         name: "role",
         options: { namespace: "bots" },
         description:
-          'Replace your own role: the standing instructions that define who you are and how you behave. Use this only when the user asks you to change your role, personality, focus, or standing instructions; never on your own initiative. Pass the complete new role body, not a diff; start from your current role and keep what should stay. Do not include your identity line or a "Your role:" heading; they are added automatically. Use memory for facts, not this tool.',
+          'Replace your own role: the standing instructions that define who you are and how you behave. Use this only when the user asks you to change your role, personality, focus, or standing instructions; never on your own initiative. Pass the complete new role body, not a diff; start from your current role and keep what should stay. Do not include your identity line or a "Role" heading; they are added automatically. Use memory for facts, not this tool.',
         input: {
           type: "object",
           properties: {
@@ -3507,7 +3513,7 @@ export default Plugin.define({
             role: {
               type: "string",
               description:
-                'Optional role body: who the bot is, what it owns, and how it works. Its name, @handle, and the "Your role:" heading are added automatically, so do not include an identity preamble or a full system prompt.',
+                'Optional role body: who the bot is, what it owns, and how it works. Its name, @handle, and the "Role" heading are added automatically, so do not include an identity preamble or a full system prompt.',
             },
           },
           required: ["name"],

@@ -30,8 +30,8 @@ so you can open them in Desktop too.
 - **Role.** The bot's standing instructions. Edit it in **Settings**, or ask the
   bot to change it (`bots_role`). Bots change their role only when you ask, and
   only their own; the new role applies from the next model step. Write only the
-  role body: the name, `@handle`, and `Your role:` heading are added to the
-  system prompt automatically, so don't repeat them in the field.
+  role body: the name, `@handle`, and `Role` heading are added to the system
+  prompt automatically, so don't repeat them in the field.
 - **Coordinator.** Only the coordinator can create bots (`bots_create`). The
   first bot, **Chief** (`@chief`), starts as the coordinator. Choose another in
   **Settings → Bots**; deleting it clears the setting.
