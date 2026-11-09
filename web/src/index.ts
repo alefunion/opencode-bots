@@ -6,7 +6,18 @@ import { Service } from "@opencode/client/service"
 import index from "./index.html"
 import { WEB_PORT } from "../../plugin/src/port"
 import { remote } from "./remote"
-import { HexError, MAX_CLIP_BYTES, hexStatus, transcribe } from "./hex"
+import {
+  HexError,
+  MAX_CLIP_BYTES,
+  MAX_STREAM_CHUNK_BYTES,
+  cancelStream,
+  finishStream,
+  hexStatus,
+  openStream,
+  streamAudio,
+  streamEvents,
+  transcribe,
+} from "./hex"
 import {
   internalAuthorized,
   notify,
@@ -268,6 +279,40 @@ async function api(request: Request): Promise<Response> {
     } catch (cause) {
       if (cause instanceof HexError) return fail(cause.message, cause.status)
       return fail("Could not transcribe that", 502, cause)
+    }
+  }
+
+  if (path === "/api/dictation" && request.method === "POST") {
+    try {
+      return Response.json(await openStream())
+    } catch (cause) {
+      if (cause instanceof HexError) return fail(cause.message, cause.status)
+      return fail("Could not start dictation", 502, cause)
+    }
+  }
+
+  const dictation = /^\/api\/dictation\/([0-9a-f-]{36})\/(audio|events|finish|cancel)$/.exec(path)
+  if (dictation) {
+    const [, id = "", action] = dictation
+    try {
+      if (action === "events" && request.method === "GET") {
+        return await streamEvents(id, request.signal)
+      }
+      if (request.method !== "POST") return fail("method not allowed", 405)
+      if (action === "audio") {
+        const length = Number(request.headers.get("content-length") ?? 0)
+        if (length > MAX_STREAM_CHUNK_BYTES) return fail("audio chunk too large", 413)
+        const samples = await request.arrayBuffer()
+        if (samples.byteLength > MAX_STREAM_CHUNK_BYTES) return fail("audio chunk too large", 413)
+        await streamAudio(id, samples)
+        return new Response(null, { status: 204 })
+      }
+      if (action === "finish") return Response.json(await finishStream(id))
+      await cancelStream(id)
+      return new Response(null, { status: 204 })
+    } catch (cause) {
+      if (cause instanceof HexError) return fail(cause.message, cause.status)
+      return fail("Dictation failed", 502, cause)
     }
   }
 

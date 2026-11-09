@@ -44,11 +44,14 @@ so you can open them in Desktop too.
   computer that runs OpenCode, the composer shows a microphone. Tap it, speak,
   then tap the red stop button: the words appear where the cursor was, ready to
   edit and send. `×` or `Escape` discards the recording. It works from your
-  phone too, because that computer does the transcribing, with the model and
-  language selected in Hex (on Linux, Hex's first downloaded model). Clips up
-  to 30 seconds use the copy of the model Hex already has loaded; longer ones
-  make Hex load a second copy for a while. Recordings stop at 10 minutes and are
-  never saved. The text is what was heard, without Hex's Output processing
+  phone too, because that computer does the transcribing, on the model and
+  language Hex dictates with. The audio goes to Hex while you speak, so the text
+  is ready as soon as you stop, and what Hex has heard shows above the text box:
+  each phrase once you pause, or word by word with a model that streams. While
+  Hex is busy with another stream, the recording is sent whole when you stop
+  instead, with no live text; clips over 30 seconds then make Hex load a second
+  copy of its model for a while. Recordings stop at 10 minutes and are never
+  saved. The text is what was heard, without Hex's Output processing
   (corrections, transformations, rewriting). The microphone is hidden if Hex
   has never run on that computer.
 - **Deleting a bot** deletes its OpenCode session, as in Desktop. If that fails,

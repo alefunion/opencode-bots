@@ -6,14 +6,16 @@ import { join } from "node:path"
 /**
  * Dictation through Hex (https://github.com/anomalyco/hex), the local voice
  * dictation app. The running Hex publishes an owner-only local API; this module
- * reads its discovery file and sends finished WAV clips to its
- * `POST /transcriptions`. Hex runs them on the model dictation already holds,
- * so no second copy of the model is loaded. The bearer token never leaves this
- * process: the browser only ever talks to `/api/transcribe`.
+ * reads its discovery file and relays the browser's audio to it: live, as a
+ * `/streams` stream (docs/streams.md in Hex), or as one finished WAV clip to
+ * `POST /transcriptions` when no stream can be had. Either way Hex runs it on
+ * the model dictation already holds, so no second copy is loaded. The bearer
+ * and stream tokens never leave this process: the browser only ever talks to
+ * `/api/dictation` and `/api/transcribe`.
  */
 
-/** Hex rejects bigger uploads at 64 MiB; ten minutes of 48 kHz mono 16-bit is about 55 MiB. */
-export const MAX_CLIP_BYTES = 60 * 1024 * 1024
+/** Ten minutes of 16 kHz mono 16-bit is about 19 MB; Hex itself stops at 64 MiB. */
+export const MAX_CLIP_BYTES = 24 * 1024 * 1024
 
 const HEX_DIR =
   process.env.HEX_APPLICATION_SUPPORT_DIR ??
@@ -39,9 +41,12 @@ async function discover(): Promise<Discovery> {
   } catch {
     throw new HexError("Hex isn't running. Open Hex on your computer to dictate.", 503)
   }
-  const { port, token, pid } = (raw ?? {}) as { port?: unknown; token?: unknown; pid?: unknown }
+  const { port, token, pid, apiVersion } = (raw ?? {}) as Record<string, unknown>
   if (typeof port !== "number" || typeof token !== "string" || typeof pid !== "number") {
     throw new HexError("Hex's local API file is not readable.", 503)
+  }
+  if (apiVersion !== "2") {
+    throw new HexError(`This Hex speaks local API ${String(apiVersion)}; dictation needs 2.`, 503)
   }
   try {
     process.kill(pid, 0)
@@ -158,5 +163,113 @@ export async function transcribe(wav: ArrayBuffer): Promise<{ text: string; dura
   return {
     text: body.transcript.trim(),
     durationMs: typeof body.durationMs === "number" ? body.durationMs : 0,
+  }
+}
+
+/** Hex refuses bigger audio requests on a stream. */
+export const MAX_STREAM_CHUNK_BYTES = 256 * 1024
+
+type Stream = { hex: Discovery; path: string; owner: string; touched: number }
+
+/** Live streams by this app's own id; Hex's id and owner token stay here. */
+const streams = new Map<string, Stream>()
+
+// A browser that vanished leaves its entry behind; Hex ends the stream itself
+// after 10 s without audio, so an hour-old entry is long dead.
+setInterval(() => {
+  for (const [id, stream] of streams) {
+    if (Date.now() - stream.touched > 60 * 60 * 1000) streams.delete(id)
+  }
+}, 60_000).unref()
+
+/**
+ * Opens a stream of 16 kHz mono s16le audio. `id` is null when Hex is running
+ * but can't stream now (another stream is live, or dictation holds no GGUF
+ * model); the browser then sends the whole clip to `transcribe` instead.
+ */
+export async function openStream(): Promise<{ id: string | null; partials: boolean }> {
+  const hex = await discover()
+  const response = await call(hex, "/streams", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sampleFormat: "s16le", sampleRate: 16_000 }),
+  })
+  const body = (await response.json().catch(() => ({}))) as {
+    id?: unknown
+    ownerToken?: unknown
+    partials?: unknown
+  }
+  if (!response.ok || typeof body.id !== "number" || typeof body.ownerToken !== "string") {
+    return { id: null, partials: false }
+  }
+  const id = crypto.randomUUID()
+  streams.set(id, {
+    hex,
+    path: `/streams/${body.id}`,
+    owner: body.ownerToken,
+    touched: Date.now(),
+  })
+  return { id, partials: body.partials === true }
+}
+
+async function streamCall(id: string, action: string, init: RequestInit = {}) {
+  const stream = streams.get(id)
+  if (!stream) throw new HexError("That dictation has ended.", 404)
+  stream.touched = Date.now()
+  const headers = new Headers(init.headers)
+  headers.set("x-hex-stream-token", stream.owner)
+  return call(stream.hex, `${stream.path}/${action}`, { ...init, headers })
+}
+
+const streamError = (status: number, body: { code?: unknown }) =>
+  new HexError(
+    `Hex stopped the live dictation (${typeof body.code === "string" ? body.code : status}).`,
+    409,
+  )
+
+const streamFailure = async (response: Response) =>
+  streamError(response.status, (await response.json().catch(() => ({}))) as { code?: unknown })
+
+export async function streamAudio(id: string, samples: ArrayBuffer) {
+  const response = await streamCall(id, "audio", {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body: samples,
+  })
+  if (response.status !== 204) throw await streamFailure(response)
+}
+
+/** Hex's server-sent events for the stream, passed through as they come. */
+export async function streamEvents(id: string, signal: AbortSignal): Promise<Response> {
+  const response = await streamCall(id, "events", { signal })
+  if (!response.ok || !response.body) throw await streamFailure(response)
+  return new Response(response.body, {
+    headers: { "content-type": "text/event-stream", "cache-control": "no-store" },
+  })
+}
+
+export async function finishStream(id: string): Promise<{ text: string; durationMs: number }> {
+  try {
+    const response = await streamCall(id, "finish", { method: "POST" })
+    const body = (await response.json().catch(() => ({}))) as {
+      text?: unknown
+      durationMs?: unknown
+      code?: unknown
+    }
+    if (!response.ok || typeof body.text !== "string") throw streamError(response.status, body)
+    return {
+      text: body.text.trim(),
+      durationMs: typeof body.durationMs === "number" ? body.durationMs : 0,
+    }
+  } finally {
+    streams.delete(id)
+  }
+}
+
+export async function cancelStream(id: string) {
+  try {
+    await streamCall(id, "cancel", { method: "POST" })
+  } finally {
+    streams.delete(id)
   }
 }

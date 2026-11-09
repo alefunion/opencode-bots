@@ -39,12 +39,23 @@ as the current message. Each run is saved to `bots.json` before the bot is
 woken, so a restart can't fire it twice.
 
 Dictation borrows the running Hex app instead of loading a speech model of its
-own. The browser records with `MediaRecorder`, decodes the clip, and posts it
-as 16 kHz mono 16-bit WAV to the web app's `/api/transcribe`. The web app reads
-Hex's owner-only discovery file (`~/Library/Application Support/hex/local-api.json`,
-`~/.local/share/hex` on Linux, `HEX_APPLICATION_SUPPORT_DIR` overrides), asks
-`POST /control` for the dictation model and language, and sends the clip to
-Hex's `POST /transcriptions` with them, so Hex runs it on its warm model. A
+own. The web app reads Hex's owner-only discovery file
+(`~/Library/Application Support/hex/local-api.json`, `~/.local/share/hex` on
+Linux, `HEX_APPLICATION_SUPPORT_DIR` overrides; local API version 2 only) and
+relays the browser's audio to Hex's local API:
+
+```text
+browser (AudioWorklet → 16 kHz s16le)       web app                 Hex
+POST /api/dictation                    →    POST /streams           opens a stream on dictation's model
+POST /api/dictation/:id/audio  (¼ s)   →    /streams/{id}/audio
+GET  /api/dictation/:id/events (SSE)   ←    /streams/{id}/events    segments and partials, shown live
+POST /api/dictation/:id/finish         →    /streams/{id}/finish    final text
+POST /api/transcribe  (whole WAV)      →    POST /transcriptions    fallback, model from POST /control
+```
+
+The `:id` is the web app's own random id; Hex's stream id and owner token stay
+in the web app. The browser keeps every sample, so when Hex can't stream (one
+stream at a time) or a stream breaks, it sends the whole clip as a WAV instead.
 `GET /api/transcribe` reports whether Hex is installed and answering, which
 decides whether the composer shows the microphone.
 
@@ -67,8 +78,8 @@ plugin/src/webhost.ts   runs the web app on OpenCode's Bun runtime
 plugin/src/gui.tsx      Desktop Settings → Bots page
 web/src/index.ts        web app server: pairing, proxy, push, tunnel
 web/src/remote.ts       tunnel connection and pairing cookies
-web/src/hex.ts          dictation: sends clips to the running Hex's local API
-web/src/dictation.ts    browser microphone capture and WAV encoding
+web/src/hex.ts          dictation: relays audio to the running Hex's local API
+web/src/dictation.ts    browser microphone capture, live streaming, WAV fallback
 web/src/App.tsx         React app
 web/src/components/     chat, sidebar, and Settings tabs (Planner.tsx: Tasks and Jobs;
                         Requests.tsx: question and permission cards)
@@ -87,10 +98,10 @@ web/src/sw.js           service worker (push, notification clicks)
 - The plugin's notify requests are authorized by a 256-bit internal secret in
   `push.json` (mode `0600`), not by a local-only check.
 - `bots.json` holds roles and memory, not provider credentials.
-- Hex's bearer token is read per request and stays in the web app; the browser
-  only reaches `/api/transcribe`, behind the pairing cookie and origin check
-  like every `/api` route. Clips are held in memory, capped at 60 MB, and never
-  written to disk.
+- Hex's bearer token and stream owner tokens stay in the web app; the browser
+  only reaches `/api/dictation` and `/api/transcribe`, behind the pairing cookie
+  and origin check like every `/api` route. Audio is held in memory (whole
+  clips capped at 24 MB, stream chunks at 256 KiB) and never written to disk.
 
 > [!WARNING]
 > A paired device has full use of your OpenCode service, as Desktop does:

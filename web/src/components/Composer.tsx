@@ -2,14 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { Bot, BotCommand, PromptAttachment } from "../types"
 import { Avatar } from "./Avatar"
 import { Icon } from "../icons"
-import {
-  MAX_RECORDING_MS,
-  canRecord,
-  dictationStatus,
-  record,
-  transcribe,
-  type Recording,
-} from "../dictation"
+import { MAX_RECORDING_MS, canRecord, dictate, dictationStatus, type Dictation } from "../dictation"
 
 const MAX_FILES = 10
 const MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -90,7 +83,8 @@ export function Composer({
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [level, setLevel] = useState(0)
   const [elapsed, setElapsed] = useState(0)
-  const recording = useRef<Recording | null>(null)
+  const [heard, setHeard] = useState("")
+  const recording = useRef<Dictation | null>(null)
   const insertAt = useRef(0)
 
   useEffect(() => {
@@ -111,6 +105,7 @@ export function Composer({
     recording.current = null
     setVoice("idle")
     setLevel(0)
+    setHeard("")
   }
 
   const startDictation = async () => {
@@ -118,10 +113,8 @@ export function Composer({
     setVoice("starting")
     insertAt.current = area.current?.selectionEnd ?? text.length
     try {
-      // Checked first so a closed Hex doesn't cost the user a whole recording.
-      const status = await dictationStatus()
-      if (!status.available) throw new Error(status.error || "Hex isn't available.")
-      recording.current = await record(setLevel)
+      setHeard("")
+      recording.current = await dictate({ onLevel: setLevel, onText: setHeard })
       setElapsed(0)
       setVoice("recording")
     } catch (cause) {
@@ -144,7 +137,7 @@ export function Composer({
     setVoice("transcribing")
     setLevel(0)
     try {
-      const words = await transcribe(await current.stop())
+      const words = await current.stop()
       if (!words) throw new Error("No speech was heard.")
       const at = insertAt.current
       let cursor = 0
@@ -163,6 +156,7 @@ export function Composer({
       setVoiceError(cause instanceof Error ? cause.message : "Could not transcribe that.")
     } finally {
       setVoice("idle")
+      setHeard("")
     }
   }
 
@@ -428,6 +422,11 @@ export function Composer({
             {reading ? <span className="composer-attachment-reading">Attaching…</span> : null}
             {attachmentError ? <span className="composer-error">{attachmentError}</span> : null}
             {voiceError ? <span className="composer-error">{voiceError}</span> : null}
+          </div>
+        ) : null}
+        {voice !== "idle" && heard ? (
+          <div className="composer-heard" aria-live="polite">
+            {heard}
           </div>
         ) : null}
         <textarea
