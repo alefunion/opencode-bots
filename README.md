@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="public/mark-dark.svg">
-  <img alt="Bots for OpenCode" src="public/mark-light.svg" width="80" height="80">
+  <img alt="Bots for OpenCode" src="public/mark-light.svg" width="64" height="80">
 </picture>
 
 # Bots for OpenCode

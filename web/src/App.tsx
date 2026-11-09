@@ -561,9 +561,9 @@ export function App() {
   if (loading) {
     return (
       <div className="boot">
-        <Mark size={35} />
+        <Mark />
         <span className="boot-spinner" />
-        <p>Connecting to OpenCode…</p>
+        <p>Connecting to Bots for OpenCode…</p>
       </div>
     )
   }
@@ -585,7 +585,7 @@ export function App() {
   if (error) {
     return (
       <div className="boot error-boot">
-        <Mark size={35} />
+        <Mark />
         <h1>OpenCode is not reachable</h1>
         <p>{error}</p>
         <p className="muted">
@@ -647,7 +647,7 @@ export function App() {
       ) : selectedGroup ? (
         <main className="chat welcome">
           <div className="welcome-card">
-            <Mark size={35} />
+            <Mark />
             <h2>Group host missing</h2>
             <p>Choose another host in group settings.</p>
             <button
@@ -661,7 +661,7 @@ export function App() {
       ) : (
         <main className="chat welcome">
           <div className="welcome-card">
-            <Mark size={35} />
+            <Mark />
             <h2>
               {state.bots.length === 0 && state.groups.length === 0
                 ? "No chats yet"

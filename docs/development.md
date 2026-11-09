@@ -42,9 +42,10 @@ source.
 
 ## Logo and icons
 
-The logo and app icons are drawn on the OpenCode logo's stroke grid; see
-[`public/logo.md`](../public/logo.md), and run `scripts/build-icons.sh` after
-changing them.
+The logo is drawn on a 16 × 20 grid; see [`public/logo.md`](../public/logo.md).
+After changing a mark or the app icon in `public/`, run
+`scripts/build-icons.sh`: it compresses the SVGs with SVGO (settings in
+`scripts/svgo.config.mjs`) and renders the favicon and Home Screen PNGs. It needs librsvg (`brew install librsvg`).
 
 ## Install script
 

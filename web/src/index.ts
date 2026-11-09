@@ -345,13 +345,7 @@ const clip = (value: unknown, max: number, fallback: string) =>
   typeof value === "string" && value.trim() ? value.trim().slice(0, max) : fallback
 
 const ICONS = new URL("./icons/", import.meta.url)
-const ICON_NAMES = [
-  "icon-192.png",
-  "icon-512.png",
-  "maskable-192.png",
-  "maskable-512.png",
-  "apple-touch-icon.png",
-]
+const ICON_NAMES = ["icon-192.png", "icon-512.png", "apple-touch-icon.png"]
 
 const iconResponse = (name: string) =>
   new Response(Bun.file(new URL(name, ICONS)), {

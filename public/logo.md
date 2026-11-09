@@ -1,11 +1,19 @@
 # Bots for OpenCode — icon notes
 
-The mark is a square speech bubble that doubles as a small robot: two open eyes over a shaded band, standing on two one-stroke feet: two open eyes over a shaded band. It follows the construction of the OpenCode logo, so it sits naturally next to OpenCode without copying it.
+The mark is a small robot face in a thick frame: two eyes over a shaded band, inside a window cut into a solid block.
 
-- **Grid.** 5 × 5 strokes. The outline, each foot, the bar between the eyes, each eye, and the shaded band are all exactly one stroke, the same rule as the OpenCode logo (one stroke is a quarter of its 4-stroke width).
-- **Tones.** OpenCode's single ink at full strength for the outline and a lower opacity for the inner shade, with the eyes left open like the logo's counter. Light backgrounds: `#1F1F1F`, shade at 20%. Dark backgrounds: `#EEEEEE`, shade at 28%. The app icon uses the dark tones on `#0B0B0B`, with the shade flattened to `#4B4B4B`.
-- **Whole pixels.** Scale in steps of 5 × 5px so every edge lands on a pixel: 35px in the app; strokes of 22px at 180px, 24px at 192px, and 62px at 512px in the Home Screen icons; 20px and 56px in the maskable icons. Smallest legible size: 15 × 15px.
-- **Clear space.** At least two strokes on every side, except in Home Screen icons: there the mark fills about 61% of the square, a little less than the OpenCode logo in its app icon, since a square mark looks larger than other app icons. Maskable icons keep two strokes, so Android's round crop never clips the corners.
-- Flat geometry only: no colour, gradients, drop shadows, glows, or outlines. No lettering, and no OpenCode O-frame or wordmark, so it does not suggest Anomaly made or endorses it.
+- **Grid.** 16 × 20 units. The frame is 4 units thick, the window 8 × 12, each eye 2 × 4, and the shaded band fills the lower 8 units of the window.
+- **Tones.** Light backgrounds: `#000000` mark, shade in the same black at 17.6% opacity (`#D2D2D2` on white). Dark backgrounds: `#FFFFFF` mark, shade in the same white at 29.4% opacity (`#4B4B4B` on black). Keep three decimals so the shade lands exactly on those greys.
+- **Whole pixels.** Scale in whole steps (16 × 20px, 32 × 40px, …) so every edge lands on a pixel: 32 × 40px in the app. Smallest legible size: 16 × 20px. The favicon centres the mark on a 20 × 20 square.
+- **App icon.** Measured from OpenCode's own iOS app icon (`packages/desktop/icons/prod/ios/AppIcon-512@2x.png` in anomalyco/opencode, which its web app serves as the apple-touch-icon), on the same 1024 canvas:
+  - Mark at x 231–791, y 162–862: 16 × 20 units of 35px, so the window interior is 280 × 420 at (371, 302), exactly where OpenCode's is.
+  - Background: a full square with a vertical gradient, `#343434` to `#181818`. No rounded corners: iOS and Android apply their own mask.
+  - Frame: lit from above, `#FFFFFF` to `#B2B2B2`.
+  - Shadow: a black rectangle 10px wider on each side and 48px longer below than the frame, blurred 7px across and 28px down.
+  - Window: a dark well (`#010101` to `#292929`) above one shaded square, the mark's 8 × 8 grey band, `#525250` turning olive `#1E1808` at the bottom, with darker side walls. OpenCode's ledge and inset band are left out, so it reads as a single square as in the flat mark.
+  - Eyes: the frame's material and lighting at their own size, with a small shadow below.
+  - No edge highlights or bevel lines on any shape: on the Home Screen, iOS draws its own. OpenCode's grain texture is left out too: it disappears at Home Screen sizes.
+  - The same file serves as the maskable icon, as OpenCode's does.
+- Outside the app icon, flat geometry only: no colour, gradients, drop shadows, glows, or outlines. No lettering, and no OpenCode O-frame or wordmark, so it does not suggest Anomaly made or endorses it.
 
-Files: `mark-light.svg` (dark mark for light backgrounds), `mark-dark.svg` (light mark for dark backgrounds), `mark.svg` (switches with the system theme, used as the favicon), `logo.svg` (512px app icon). Rebuild the PNGs with `scripts/build-icons.sh`.
+Files: `mark-light.svg` (dark mark for light backgrounds), `mark-dark.svg` (light mark for dark backgrounds), `mark.svg` (switches with the system theme, source of the favicon), `logo.svg` (1024px app icon, drawn by hand). `scripts/build-icons.sh` compresses the SVGs with SVGO and renders the favicon and the PNGs.

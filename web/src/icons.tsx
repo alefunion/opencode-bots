@@ -18,15 +18,16 @@ type IconName =
   | "stop"
 
 /**
- * The Bots for OpenCode mark: a speech bubble robot with two eyes and two feet, on a 5 × 5 grid of
- * OpenCode-logo strokes. Keep `size` a multiple of 5 so every edge lands on a pixel.
+ * The Bots for OpenCode mark: a robot face in a thick frame, on a 16 × 20 grid. Keep `height` a
+ * multiple of 20 so every edge lands on a pixel.
  */
-export function Mark({ size = 25 }: { size?: number }) {
+export function Mark({ height = 40 }: { height?: number }) {
+  const width = (height * 4) / 5
   return (
-    <span className="brand-mark" style={{ width: size, height: size }} aria-hidden="true">
-      <svg viewBox="0 0 5 5" width={size} height={size}>
-        <path className="brand-mark-shade" d="M1 2H4V3H1Z" />
-        <path fillRule="evenodd" d="M0 0H5V5H4V4H1V5H0ZM1 1H2V2H3V1H4V3H1Z" />
+    <span className="brand-mark" style={{ width, height }} aria-hidden="true">
+      <svg viewBox="0 0 16 20" width={width} height={height}>
+        <path className="brand-mark-shade" d="M4 8h8v8H4Z" />
+        <path d="M16 20H0V0h16zM4 16h8V4H4zm3-6H5V6h2zm4 0H9V6h2z" />
       </svg>
     </span>
   )

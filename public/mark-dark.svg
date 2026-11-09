@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5 5" width="300" height="300">
-  <path fill="#EEEEEE" fill-opacity="0.28" d="M1 2H4V3H1Z"/>
-  <path fill="#EEEEEE" fill-rule="evenodd" d="M0 0H5V5H4V4H1V5H0ZM1 1H2V2H3V1H4V3H1Z"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="20" viewBox="0 0 16 20"><path fill="#fff" fill-opacity=".294" d="M4 8h8v8H4Z"/><path fill="#fff" d="M16 20H0V0h16zM4 16h8V4H4zm3-6H5V6h2zm4 0H9V6h2z"/></svg>
