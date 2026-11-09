@@ -89,6 +89,7 @@ export type Bot = {
   name: string
   handle: string
   color: string
+  face: string
   role: string
   sessionID: string
   memory: MemoryEntry[]

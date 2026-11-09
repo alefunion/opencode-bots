@@ -95,7 +95,7 @@ function BotLabel({ bot, author, bots }: { bot?: Bot; author?: string; bots: Bot
   const creator = author ? bots.find((item) => item.id === author) : undefined
   return (
     <span className="planner-bot">
-      {bot ? <Avatar name={bot.name} color={bot.color} size={16} /> : null}
+      {bot ? <Avatar name={bot.name} color={bot.color} face={bot.face} size={16} /> : null}
       <span>{bot?.name ?? "Unknown bot"}</span>
       {creator && creator.id !== bot?.id ? (
         <span className="planner-muted">· by {creator.name}</span>

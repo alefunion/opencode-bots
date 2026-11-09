@@ -167,7 +167,7 @@ export function Sidebar({
                       className={`bot-row${active ? " active" : ""}`}
                       onClick={() => onSelectBot(bot)}
                     >
-                      <Avatar name={bot.name} color={bot.color} size={32} />
+                      <Avatar name={bot.name} color={bot.color} face={bot.face} size={32} />
                       <span className="bot-row-main">
                         <span className="bot-row-top">
                           <span className="bot-row-name">{bot.name}</span>

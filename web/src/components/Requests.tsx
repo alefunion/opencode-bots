@@ -121,7 +121,7 @@ function FormCard({
 
   return (
     <div className="message-row assistant">
-      <Avatar name={bot.name} color={bot.color} size={24} />
+      <Avatar name={bot.name} color={bot.color} face={bot.face} size={24} />
       <form className="request-card" onSubmit={submit}>
         <span className="bubble-name">
           {bot.name}
@@ -274,7 +274,7 @@ function PermissionCard({
 
   return (
     <div className="message-row assistant">
-      <Avatar name={bot.name} color={bot.color} size={24} />
+      <Avatar name={bot.name} color={bot.color} face={bot.face} size={24} />
       <div className="request-card">
         <span className="bubble-name">
           {bot.name}

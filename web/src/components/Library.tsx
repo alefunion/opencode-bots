@@ -223,7 +223,12 @@ export function SkillsEditor({
                     <div className="library-card-head">
                       <div className="skill-draft-author">
                         {author ? (
-                          <Avatar name={author.name} color={author.color} size={18} />
+                          <Avatar
+                            name={author.name}
+                            color={author.color}
+                            face={author.face}
+                            size={18}
+                          />
                         ) : (
                           <Icon name="bot" size={15} />
                         )}
@@ -702,7 +707,7 @@ function ScopePicker({
                     onChange("selected", [...next])
                   }}
                 >
-                  <Avatar name={bot.name} color={bot.color} size={16} />
+                  <Avatar name={bot.name} color={bot.color} face={bot.face} size={16} />
                   {bot.name}
                 </button>
               )

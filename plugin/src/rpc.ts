@@ -76,6 +76,8 @@ export type BotView = {
   readonly name: string
   readonly handle: string
   readonly color: string
+  /** An 8-hex-digit seed the web app draws the bot's face from. */
+  readonly face: string
   readonly role: string
   readonly sessionID: string
   readonly memory: readonly MemoryEntry[]
@@ -86,6 +88,7 @@ export type BotView = {
 export type BotInput = {
   readonly name: string
   readonly color: string
+  readonly face?: string
   readonly role: string
   readonly memory: readonly MemoryEntry[]
 }
@@ -251,6 +254,7 @@ const bot = {
     name: { type: "string" },
     handle: { type: "string" },
     color: { type: "string" },
+    face: { type: "string" },
     role: { type: "string" },
     sessionID: { type: "string" },
     memory,
@@ -262,6 +266,7 @@ const bot = {
     "name",
     "handle",
     "color",
+    "face",
     "role",
     "sessionID",
     "memory",
@@ -276,6 +281,7 @@ const botInput = {
   properties: {
     name: { type: "string" },
     color: { type: "string" },
+    face: { type: "string" },
     role: { type: "string" },
     memory,
   },
@@ -288,6 +294,7 @@ const botPatch = {
   properties: {
     name: { type: "string" },
     color: { type: "string" },
+    face: { type: "string" },
     role: { type: "string" },
     memory,
   },

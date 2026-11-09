@@ -10,7 +10,8 @@ import type {
   ModelRef,
   RemoteInfo,
 } from "../types"
-import { Avatar, COLORS } from "./Avatar"
+import { Avatar } from "./Avatar"
+import { randomColor, randomFace } from "../face"
 import { Icon } from "../icons"
 import { CommandsEditor, SkillsEditor } from "./Library"
 import { GroupsEditor } from "./GroupSettings"
@@ -21,6 +22,7 @@ type Draft = {
   id: string | null
   name: string
   color: string
+  face: string
   role: string
   memory: MemoryEntry[]
 }
@@ -31,6 +33,7 @@ const fromBot = (bot: Bot): Draft => ({
   id: bot.id,
   name: bot.name,
   color: bot.color,
+  face: bot.face,
   role: bot.role,
   memory: bot.memory,
 })
@@ -38,7 +41,8 @@ const fromBot = (bot: Bot): Draft => ({
 const empty = (): Draft => ({
   id: null,
   name: "New bot",
-  color: COLORS[0]!,
+  color: randomColor(),
+  face: randomFace(),
   role: "",
   memory: [],
 })
@@ -147,6 +151,7 @@ export function Settings({
       const payload = {
         name: draft.name,
         color: draft.color,
+        face: draft.face,
         role: draft.role,
         memory: draft.memory,
       }
@@ -381,7 +386,7 @@ export function Settings({
                       className={`settings-bot${selectedID === bot.id ? " active" : ""}`}
                       onClick={() => select(bot)}
                     >
-                      <Avatar name={bot.name} color={bot.color} size={24} />
+                      <Avatar name={bot.name} color={bot.color} face={bot.face} size={24} />
                       <span>
                         <strong>{bot.name}</strong>
                         <small>@{bot.handle}</small>
@@ -417,18 +422,22 @@ export function Settings({
                       </label>
 
                       <div className="field">
-                        <span>Color</span>
-                        <div className="swatches">
-                          {COLORS.map((color) => (
-                            <button
-                              key={color}
-                              className="swatch"
-                              style={{ background: color }}
-                              aria-label={color}
-                              aria-pressed={draft.color === color}
-                              onClick={() => patch({ color })}
-                            />
-                          ))}
+                        <span>Face</span>
+                        <div className="face-picker">
+                          <Avatar
+                            name={draft.name}
+                            color={draft.color}
+                            face={draft.face}
+                            size={56}
+                          />
+                          <button
+                            className="secondary-button"
+                            onClick={() =>
+                              patch({ face: randomFace(), color: randomColor(draft.color) })
+                            }
+                          >
+                            Random face
+                          </button>
                         </div>
                       </div>
 

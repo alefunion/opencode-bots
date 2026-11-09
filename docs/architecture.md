@@ -101,6 +101,7 @@ web/src/index.ts        web app server: pairing, proxy, push, tunnel
 web/src/remote.ts       tunnel connection and pairing cookies
 web/src/hex.ts          dictation: relays audio to the running Hex's local API
 web/src/dictation.ts    browser microphone capture, live streaming, WAV fallback
+web/src/face.ts         bot faces drawn as SVG from a saved 8-hex-digit seed
 web/src/App.tsx         React app
 web/src/components/     chat, sidebar, and Settings tabs (Planner.tsx: Tasks and Jobs;
                         Requests.tsx: question and permission cards)

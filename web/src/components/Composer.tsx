@@ -373,7 +373,12 @@ export function Composer({
                 choose(candidate)
               }}
             >
-              <Avatar name={candidate.name} color={candidate.color} size={26} />
+              <Avatar
+                name={candidate.name}
+                color={candidate.color}
+                face={candidate.face}
+                size={26}
+              />
               <span>{candidate.name}</span>
               <span className="mention-handle">@{candidate.handle}</span>
             </button>

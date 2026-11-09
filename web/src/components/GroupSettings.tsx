@@ -270,7 +270,7 @@ export function GroupsEditor({
                         disabled={isHost}
                         type="button"
                       >
-                        <Avatar name={bot.name} color={bot.color} size={20} />
+                        <Avatar name={bot.name} color={bot.color} face={bot.face} size={20} />
                         <span className="member-option-main">
                           <strong>{bot.name}</strong>
                           <small>@{bot.handle}</small>

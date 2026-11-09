@@ -9,12 +9,16 @@ supported), and port `49384` free on `127.0.0.1`.
 ## Bots
 
 Each bot is one long-lived OpenCode session with a name, an `@handle`, a role, a
-coloured avatar, and its own memory. Bot sessions live in `~/Bots for OpenCode`,
+face, and its own memory. Bot sessions live in `~/Bots for OpenCode`,
 so you can open them in Desktop too.
 
 - **Names and handles.** Only the name is editable; the handle is derived from it
   (`Research Lead` → `@research-lead`, with a numeric suffix if taken), so
   renaming changes the handle.
+- **Face.** A flat shape with two eyes, in a random colour from the iOS system
+  palette. In **Settings → Bots**, click **Random face** until you like one, then
+  save. Bots created by Chief, and bots from before faces existed, get one
+  automatically. Groups keep a coloured square with their initials.
 - **Model.** One model for every bot and group, chosen in **Settings → Bots**. A
   session switched to another model elsewhere is switched back on its next
   message.

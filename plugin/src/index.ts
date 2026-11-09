@@ -15,7 +15,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { randomBytes, randomUUID } from "node:crypto"
+import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { WEB_PORT } from "./port"
 import { acquireWebHost } from "./webhost"
 import {
@@ -129,6 +129,8 @@ type StoredBot = {
   name: string
   handle: string
   color: string
+  /** Seed for the face the web app draws (web/src/face.ts). */
+  face: string
   role: string
   sessionID: string
   memory: StoredMemory[]
@@ -282,6 +284,11 @@ const cleanColor = (value: unknown) => {
   const text = typeof value === "string" ? value.trim() : ""
   return /^#[0-9a-fA-F]{6}$/.test(text) ? text.toLowerCase() : DEFAULT_COLORS[0]
 }
+
+const cleanFace = (value: unknown) =>
+  typeof value === "string" && /^[0-9a-f]{8}$/.test(value) ? value : null
+
+const randomFace = () => randomBytes(4).toString("hex")
 
 const cleanRole = (value: unknown) => (typeof value === "string" ? value.slice(0, MAX_ROLE) : "")
 
@@ -625,6 +632,7 @@ const toView = (bot: StoredBot): BotView => ({
   name: bot.name,
   handle: bot.handle,
   color: bot.color,
+  face: bot.face,
   role: bot.role,
   sessionID: bot.sessionID,
   memory: bot.memory.map((entry) => ({ ...entry })),
@@ -658,6 +666,9 @@ const storedBot = (raw: Record<string, unknown>): StoredBot => {
     name,
     handle: typeof raw.handle === "string" && raw.handle ? raw.handle : slugify(name),
     color: cleanColor(raw.color),
+    // Bots saved before faces existed get a stable one derived from their ID.
+    face:
+      cleanFace(raw.face) ?? createHash("sha1").update(String(raw.id)).digest("hex").slice(0, 8),
     role: cleanRole(raw.role),
     sessionID: typeof raw.sessionID === "string" ? raw.sessionID : "",
     memory: cleanMemory(raw.memory),
@@ -1579,6 +1590,7 @@ export default Plugin.define({
         name,
         handle: uniqueHandle(slugify(name)),
         color: cleanColor(input.color),
+        face: cleanFace(input.face) ?? randomFace(),
         role: cleanRole(input.role),
         memory: cleanMemory(input.memory),
       }
@@ -1590,6 +1602,7 @@ export default Plugin.define({
         bot.handle = uniqueHandle(slugify(bot.name), bot.id)
       }
       if (patch.color !== undefined) bot.color = cleanColor(patch.color)
+      if (patch.face !== undefined) bot.face = cleanFace(patch.face) ?? bot.face
       if (patch.role !== undefined) {
         const role = cleanRole(patch.role)
         if (role !== bot.role) bot.roleChangedAt = Date.now()

@@ -36,6 +36,7 @@ export function Chat({
   const members = group ? bots.filter((item) => group.memberIDs.includes(item.id)) : bots
   const title = group?.name ?? bot.name
   const color = group?.color ?? bot.color
+  const face = group ? undefined : bot.face
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" })
@@ -49,7 +50,7 @@ export function Chat({
         <button className="icon-button back-button" onClick={onBack} aria-label="Back to chats">
           <Icon name="back" />
         </button>
-        <Avatar name={title} color={color} size={28} />
+        <Avatar name={title} color={color} face={face} size={28} />
         <div className="chat-title">
           <div className="chat-name-row">
             <div className="chat-name">{title}</div>
@@ -68,7 +69,7 @@ export function Chat({
       <div className="messages">
         {visible.length === 0 ? (
           <div className="chat-empty">
-            <Avatar name={title} color={color} size={48} />
+            <Avatar name={title} color={color} face={face} size={48} />
             <h2>{title}</h2>
             <p>
               {group
@@ -79,7 +80,8 @@ export function Chat({
               <div className="member-chips">
                 {members.map((member) => (
                   <span className="member-chip" key={member.id}>
-                    <Avatar name={member.name} color={member.color} size={16} />@{member.handle}
+                    <Avatar name={member.name} color={member.color} face={member.face} size={16} />@
+                    {member.handle}
                   </span>
                 ))}
               </div>
@@ -131,7 +133,7 @@ export function Chat({
                   <MemberBubble message={message} bots={bots} />
                 ) : (
                   <div className="message-row assistant">
-                    <Avatar name={bot.name} color={bot.color} size={24} />
+                    <Avatar name={bot.name} color={bot.color} face={bot.face} size={24} />
                     <div className="bubble assistant-bubble">
                       <span className="bubble-name">
                         {bot.name}
@@ -152,7 +154,7 @@ export function Chat({
 
         {typing && requests.length === 0 ? (
           <div className="message-row assistant">
-            <Avatar name={bot.name} color={bot.color} size={24} />
+            <Avatar name={bot.name} color={bot.color} face={bot.face} size={24} />
             <div className="bubble assistant-bubble streaming">
               <span className="bubble-name">
                 {bot.name}
@@ -185,7 +187,7 @@ function MemberBubble({ message, bots }: { message: UiMessage; bots: Bot[] }) {
   const color = member?.color ?? "#64748b"
   return (
     <div className="message-row assistant member-row">
-      <Avatar name={name} color={color} size={24} />
+      <Avatar name={name} color={color} face={member?.face} size={24} />
       <div className="bubble assistant-bubble member-bubble">
         <span className="bubble-name">
           {name}
