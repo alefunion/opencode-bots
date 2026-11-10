@@ -746,9 +746,12 @@ const LEARNING_RULES = [
 
 const PLANNING_RULES = [
   "Tasks and jobs:",
-  "- Track work that outlives your current reply with bots_task: follow-ups, multi-step work, and anything you promised to do later. Keep the list current: in progress when you start, done when finished; delete tasks that no longer matter.",
-  '- Give a task a wake time to be reminded at that moment (wake: "45m", "2h", "3d", or "2026-11-09 09:00"). When a task reminder arrives, act on it, then mark the task done or snooze it with a new wake time.',
-  "- Create a scheduled job with bots_job only when the user asks for something to happen repeatedly. Each run posts the job's prompt into your conversation.",
+  "- Plan on your own; do not wait to be asked. Create a task with bots_task, with a wake time, whenever you say you will do something later, you are waiting on something outside this chat (a reply, a build, a delivery, a date), the user mentions a deadline or appointment, work spans several turns, or something should be checked later to confirm it worked. Skip tasks for work you finish within this reply.",
+  "- Before creating a task, check your tasks listed above and update a matching one instead of adding a duplicate. Keep the list current: in progress when you start, done when finished; delete tasks that no longer matter.",
+  '- A wake time reminds you at that moment (wake: "45m", "2h", "3d", or "2026-11-09 09:00"). When a task reminder arrives, act on it, then mark the task done or snooze it with a new wake time.',
+  "- A one-off follow-up is always a task with a wake time. Use a scheduled job (bots_job) only for something that repeats. Each run posts the job's prompt into your conversation.",
+  "- You may create a job without being asked when your role implies a recurring duty, or the user describes a need that keeps coming back. Check your jobs listed above first and update a matching one instead of adding a duplicate. Schedule it at most once a day unless the user asks for more often.",
+  "- Whenever you create or change a job yourself, say so in your reply: what it does and when it runs, so the user can cancel it. Pause, change, or delete a job set up by the user only when the user asks.",
   '- Messages that start with "Scheduled job" or "Task reminder" are automatic: the user did not just write them and may not be watching. Do the work and reply with a short result.',
 ]
 
@@ -761,7 +764,7 @@ const WORKER_RULES = [
 ]
 
 const COORDINATOR_PLANNING_RULES = [
-  "- As the coordinator you keep the team on track. You see every bot's open tasks below, and you can assign tasks or schedule jobs for any bot by passing its handle as bot. When the user hands you work with a deadline or a follow-up, record it as a task with a wake time so you come back to it without being asked.",
+  "- As the coordinator you keep the team on track. You see every bot's open tasks below, and you can assign tasks or schedule jobs for any bot by passing its handle as bot. When the user hands you work with a deadline or a follow-up, record it as a task with a wake time so you come back to it without being asked. When you delegate work to another bot, record a task for it, or a follow-up task for yourself, so it is not lost. The same rules apply to jobs you schedule for other bots: only for recurring needs, and announced in your reply.",
 ]
 
 type PlanData = {
@@ -787,6 +790,7 @@ const jobLine = (job: StoredJob) =>
       : job.nextRunAt
         ? `, next ${formatTime(job.nextRunAt, job.timeZone)}`
         : ", never runs again",
+    job.author ? "" : ", set up by the user",
     ` — ${oneLine(job.prompt, 160)}`,
   ].join("")
 
@@ -2596,7 +2600,7 @@ export default Plugin.define({
       `[${task.id}] ${handleOf(task.botID)} · ${TASK_STATUS_LABEL[task.status]}: ${task.title}${task.wakeAt ? ` (wakes ${formatTime(task.wakeAt, timeZone)})` : ""}`
 
     const describeJob = (job: StoredJob) =>
-      `[${job.id}] ${handleOf(job.botID)} · ${job.name}: ${describeCron(job.cron)} (${job.timeZone})${!job.enabled ? ", paused" : job.nextRunAt ? `, next ${formatTime(job.nextRunAt, job.timeZone)}` : ", never runs again"}`
+      `[${job.id}] ${handleOf(job.botID)} · ${job.name}: ${describeCron(job.cron)} (${job.timeZone})${!job.enabled ? ", paused" : job.nextRunAt ? `, next ${formatTime(job.nextRunAt, job.timeZone)}` : ", never runs again"}${job.author ? "" : ", set up by the user"}`
 
     const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -3349,7 +3353,7 @@ export default Plugin.define({
         name: "task",
         options: { namespace: "bots" },
         description:
-          "Keep your task board: list, create, update, or delete tasks (To do, In progress, Done). A task can have a wake time: when it arrives, you receive a task reminder in your conversation, so you can follow up without being asked. Snooze a task by giving it a new wake time. Only the coordinator can manage other bots' tasks, by passing bot.",
+          "Keep your task board: list, create, update, or delete tasks (To do, In progress, Done). Use it on your own initiative, without being asked: for anything you said you would do later, anything you are waiting on, deadlines, multi-step work, and checks to confirm something worked. Update a matching task instead of adding a duplicate. A task can have a wake time: when it arrives, you receive a task reminder in your conversation, so you can follow up without being asked. Snooze a task by giving it a new wake time. Only the coordinator can manage other bots' tasks, by passing bot.",
         input: {
           type: "object",
           properties: {
@@ -3397,7 +3401,7 @@ export default Plugin.define({
         name: "job",
         options: { namespace: "bots" },
         description:
-          "Manage scheduled jobs: prompts that run automatically on a cron schedule in a bot's own conversation. Use this only when the user asks for something to happen repeatedly. Each run posts the job's prompt as an automatic message, and the bot replies to it. Jobs can run at most every 5 minutes. Only the coordinator can manage other bots' jobs, by passing bot.",
+          "Manage scheduled jobs: prompts that run automatically on a cron schedule in a bot's own conversation. Use it only for something that repeats; a one-off follow-up is a task with a wake time instead. You may create a job without being asked when your role implies a recurring duty or the user describes a recurring need: list jobs first and update a matching one instead of adding a duplicate, schedule it at most once a day unless the user asks for more often, and say in your reply what you scheduled and when it runs. Pause, change, or delete a job the user set up only when the user asks. Each run posts the job's prompt as an automatic message, and the bot replies to it. Jobs can run at most every 5 minutes. Only the coordinator can manage other bots' jobs, by passing bot.",
         input: {
           type: "object",
           properties: {

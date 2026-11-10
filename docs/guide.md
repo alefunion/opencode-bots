@@ -87,18 +87,25 @@ See every bot's tasks and jobs in the app's **Settings → Tasks** and
 immediately.
 
 - **Tasks** are each bot's board: **To do**, **In progress**, and **Done**.
-  Bots keep it current with `bots_task`, recording follow-ups and work they
-  promised to do later. Open tasks appear in the bot's instructions, so it
-  always knows what's pending.
+  Bots keep it current with `bots_task` on their own, without being asked:
+  whenever they promise to do something later, wait on something outside the
+  chat, hear of a deadline, take on multi-step work, or need to check later that
+  something worked. Open tasks appear in the bot's instructions, so it always
+  knows what's pending.
 - **Wake times.** A task can have a wake time. When it arrives, the bot gets a
   task reminder in its own chat and acts on it, then marks the task done or
   snoozes it with a new wake time. Bots accept `45m`, `2h`, `3d`, a local time
   such as `2026-11-09 09:00` (a bare date means 09:00), or an ISO timestamp.
 - **Jobs** post a prompt into a bot's chat on a cron schedule (five fields, such
   as `0 9 * * 1-5`, or a macro such as `@daily`), in a time zone that defaults
-  to your machine's. Bots create them with `bots_job` only when you ask for
-  something recurring. **Run now** queues a run at once; a job can run at most
-  every 5 minutes. Pause a job to keep it without running it.
+  to your machine's. Bots create them with `bots_job` when you ask for
+  something recurring, and on their own when their role implies a recurring
+  duty or you describe a need that keeps coming back. A bot that schedules a job
+  itself says so in its reply, runs it at most once a day unless you ask for
+  more, and changes or deletes jobs you set up only when you ask. One-off
+  follow-ups are tasks with a wake time, not jobs. **Run now** queues a run at
+  once; a job can run at most every 5 minutes. Pause a job to keep it without
+  running it.
 - **The coordinator** sees every bot's open tasks and can assign tasks and
   schedule jobs for any bot; other bots manage only their own.
 - **Automatic messages.** Job runs and task reminders appear in the chat as a
