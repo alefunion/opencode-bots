@@ -57,21 +57,28 @@ app does (`Service.discover`, with its credentials) and pages through the
 service's `message.list` (200 per page, oldest first). Only user, bot, and
 synthetic text is kept; a user message with `fromBot` metadata is labelled as
 another bot's. Search is a case- and accent-insensitive term match in memory,
-ranked by terms matched, then recency. A search from the bot's current chat
-stops before the message that started the run, so the question can't match
-itself. Output is capped: 8 excerpts
-of about 300 characters per search, and 13 messages of up to 1,200 characters
-(8,000 in all) per read. If the service can't be reached, the tool falls back
-to `session.context` and says so. **Clear conversation** interrupts the
-session and archives it (`session.update`, `archived: true`), retitled and
-tagged `botsClearedBot: <bot id>` in its metadata. The tool lists the bot
-workspace's sessions, archived and not (a user may unarchive one), and keeps
-those with the bot's tag. Their messages are cached for the process, keyed by
-the session's last update, least recently used first, up to 20 million
-characters. Deleting a bot removes those sessions and their cache entries.
-Nothing new goes into `bots.json`. Unlike deleting, archiving may leave the old
-session's background shells or subagents running, and one that finishes can
-wake that session.
+ranked by terms matched, then recency. Output is capped: 8 excerpts of about
+300 characters per search, and 13 messages of up to 1,200 characters (8,000 in
+all) per read. If the service can't be reached, the tool falls back to
+`session.context` and says so.
+
+A search from the bot's current chat stops before the message that started the
+run, so the question can't match itself. That message is the first user,
+bot-to-bot, job, or task message from one second before the session turned
+busy on: the service stores it a few milliseconds after `time.busy`, and a bot
+message queued later must not move the cut.
+
+**Clear conversation** interrupts the session and archives it
+(`session.update`, `archived: true`), retitled and tagged
+`botsClearedBot: <bot id>` in its metadata. The tool lists the bot workspace's
+sessions, archived and not (a user may unarchive one), and keeps those with the
+bot's tag. Their messages are cached for the process, keyed by the session's
+last update, least recently used first, up to 20 million characters; a session
+that is busy when read is not cached, so a half-written reply never sticks.
+Deleting a bot removes those sessions and their cache entries. Nothing new goes
+into `bots.json`. Unlike deleting, archiving may leave the old session's
+background shells or subagents running, and one that finishes can wake that
+session.
 
 Questions and permission prompts are listed per location, so the web app asks
 the bot workspace and every unique worker directory (`form.list`,
