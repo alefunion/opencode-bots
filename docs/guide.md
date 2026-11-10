@@ -32,11 +32,26 @@ so you can open them in Desktop too.
   only their own; the new role applies from the next model step. Write only the
   role body: the name, `@handle`, and `Role` heading are added to the system
   prompt automatically, so don't repeat them in the field.
+- **Conversation history.** Long chats are compacted: the bot keeps working
+  from a summary of older messages, so details drop out of what it sees. Ask
+  about something you said before ("what was that library I mentioned last
+  week?") and the bot searches its past messages word for word
+  (`bots_history`), then answers from what it finds, or says it found nothing.
+  It sees short excerpts of the best matches (up to 8), can narrow them by date,
+  and reads the messages around one to scroll back or forward, so a search
+  never fills its context. It searches only its own chat, cleared
+  conversations included, not group chats; the coordinator can also search
+  another bot's history. History is read from OpenCode's database; nothing is
+  copied. Your messages, the bot's replies, other bots' messages to it, and
+  automatic messages are searched; tool calls and their output are not.
 - **Clear conversation.** In **Settings → Bots**, **Clear conversation** stops a
-  running reply, deletes the bot's current OpenCode session and its history,
-  and starts a fresh session. Role, memory, tasks, jobs,
-  commands, skills, and project workers are kept. Group chats and worker
-  sessions are separate and are not cleared. This cannot be undone.
+  running reply and starts a fresh session. The old session is archived, not
+  deleted: it appears in Desktop's archived sessions as "Name (cleared date)",
+  and the bot can still search it until the bot is deleted, even if you
+  unarchive it. Work the old session had running in the background, such as a
+  long shell command, may keep running. Role, memory, tasks,
+  jobs, commands, skills, and project workers are kept. Group chats and worker
+  sessions are separate and are not cleared.
 - **Coordinator.** Only the coordinator can create bots (`bots_create`). The
   first bot, **Chief** (`@chief`), starts as the coordinator. Choose another in
   **Settings → Bots**; deleting it clears the setting.
@@ -66,12 +81,14 @@ so you can open them in Desktop too.
   saved. The text is what was heard, without Hex's Output processing
   (corrections, transformations, rewriting). The microphone is hidden if Hex
   has never run on that computer.
-- **Deleting a bot** deletes its OpenCode session, as in Desktop. If that fails,
-  the bot is kept so no session is orphaned. A bot that hosts a group can't be
+- **Deleting a bot** deletes its OpenCode session and the sessions of its
+  cleared conversations, as in Desktop. If that fails, the bot is kept so no
+  session is orphaned. A bot that hosts a group can't be
   deleted until the group has another host. Its project workers' sessions are
   kept in Desktop; only the bot's list of them goes.
 - **A session deleted elsewhere** is recreated on the next message. The history
-  is gone; the role and memory still apply.
+  is gone, so the bot can't search it either; the role and memory still apply.
+  The same goes for an archived cleared conversation deleted in Desktop.
 
 ## Groups
 
@@ -242,7 +259,9 @@ opencode plugin remove opencode-bots
 rename keep using `~/OpenCode Bots`, because their bot sessions belong to it.
 Conversations themselves, project workers' sessions included, are in OpenCode's
 database, `~/.local/share/opencode/opencode.db`; `bots.json` only records which
-sessions are whose workers.
+sessions are whose workers. A cleared conversation's session is tagged with its
+bot in OpenCode's own session metadata, and is found in the bot sessions'
+location: moved elsewhere, it is no longer searched or deleted with the bot.
 
 To back up, copy the whole `bots/` directory; `bots.json` alone doesn't include
 skill files. Without `remote.json` every device must pair again; without

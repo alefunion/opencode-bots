@@ -28,6 +28,7 @@ Everything runs on your own computer. No server, no account, no extra bill.
 ## What you get
 
 - **Bots that remember.** Each bot keeps what you've told it, across every chat.
+  Ask what you talked about weeks ago, and it looks it up.
 - **Bots with a job.** A reviewer, a researcher, an ops lead. You set the role.
 - **Bots that team up.** Mention `@someone` and bots pass work to each other.
 - **Group chats.** One bot hosts, the others jump in when called.

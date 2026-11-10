@@ -5,10 +5,10 @@
     "": {
       "name": "opencode-bots",
       "dependencies": {
+        "@opencode/client": "^2.2.5",
         "@opencode/plugin": "2.2.5",
       },
       "devDependencies": {
-        "@opencode/client": "^2.2.5",
         "@opentunnel/client": "^0.6.2",
         "@types/bun": "latest",
         "@types/node": "^24.0.0",

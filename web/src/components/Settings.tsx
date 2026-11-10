@@ -179,7 +179,12 @@ export function Settings({
       onToast(message, "error")
       return
     }
-    if (!confirm(`Delete ${draft.name} and its session? This cannot be undone.`)) return
+    if (
+      !confirm(
+        `Delete ${draft.name}, its session, and its cleared conversations? This cannot be undone.`,
+      )
+    )
+      return
     setSaving(true)
     try {
       await botsApi.remove(draft.id)
@@ -198,7 +203,7 @@ export function Settings({
     if (!draft?.id) return
     if (
       !confirm(
-        `Clear the conversation with ${draft.name}? This deletes the current chat history and starts a new session. Role, memory, tasks, jobs, project workers, and group chats are kept. This cannot be undone.`,
+        `Clear the conversation with ${draft.name}? The chat starts over in a new session, and the old one is archived: ${draft.name} can still search it until the bot is deleted. Role, memory, tasks, jobs, project workers, and group chats are kept.`,
       )
     )
       return

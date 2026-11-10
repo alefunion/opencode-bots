@@ -50,6 +50,29 @@ beyond the web host, as in any other location. `bots.json` keeps only the index
 (`workers`: ID, owner bot, session ID, directory, title); deleting a bot drops
 its entries but leaves the sessions.
 
+`bots_history` reads conversations from OpenCode's own database and keeps no
+copy or index. The plugin's `session.context` returns only what follows the
+latest compaction, so the plugin finds the background service the way the web
+app does (`Service.discover`, with its credentials) and pages through the
+service's `message.list` (200 per page, oldest first). Only user, bot, and
+synthetic text is kept; a user message with `fromBot` metadata is labelled as
+another bot's. Search is a case- and accent-insensitive term match in memory,
+ranked by terms matched, then recency. A search from the bot's current chat
+stops before the message that started the run, so the question can't match
+itself. Output is capped: 8 excerpts
+of about 300 characters per search, and 13 messages of up to 1,200 characters
+(8,000 in all) per read. If the service can't be reached, the tool falls back
+to `session.context` and says so. **Clear conversation** interrupts the
+session and archives it (`session.update`, `archived: true`), retitled and
+tagged `botsClearedBot: <bot id>` in its metadata. The tool lists the bot
+workspace's sessions, archived and not (a user may unarchive one), and keeps
+those with the bot's tag. Their messages are cached for the process, keyed by
+the session's last update, least recently used first, up to 20 million
+characters. Deleting a bot removes those sessions and their cache entries.
+Nothing new goes into `bots.json`. Unlike deleting, archiving may leave the old
+session's background shells or subagents running, and one that finishes can
+wake that session.
+
 Questions and permission prompts are listed per location, so the web app asks
 the bot workspace and every unique worker directory (`form.list`,
 `permission.request.list`, settled independently and deduplicated by ID and
@@ -95,6 +118,7 @@ supported), and port `49384` free on `127.0.0.1`.
 plugin/src/index.ts     server plugin: store, hooks, bots_* tools, scheduler, RPC
 plugin/src/rpc.ts       RPC contract shared with the web app and Desktop page
 plugin/src/schedule.ts  cron and wake-time parsing, shared with the web app
+plugin/src/history.ts   bots_history: full session history from the service, search, read
 plugin/src/webhost.ts   runs the web app on OpenCode's Bun runtime
 plugin/src/gui.tsx      Desktop Settings → Bots page
 web/src/index.ts        web app server: pairing, proxy, push, tunnel
@@ -120,6 +144,9 @@ web/src/sw.js           service worker (push, notification clicks)
 - The plugin's notify requests are authorized by a 256-bit internal secret in
   `push.json` (mode `0600`), not by a local-only check.
 - `bots.json` holds roles and memory, not provider credentials.
+- `bots_history` answers only for the calling bot's own chat and cleared
+  conversations; only the coordinator can name another bot. Group chats are
+  never searched.
 - Hex's bearer token and stream owner tokens stay in the web app; the browser
   only reaches `/api/dictation` and `/api/transcribe`, behind the pairing cookie
   and origin check like every `/api` route. Audio is held in memory (whole

@@ -19,6 +19,14 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto"
 import { WEB_PORT } from "./port"
 import { acquireWebHost } from "./webhost"
 import {
+  fetchHistory,
+  parseBound,
+  readHistory,
+  searchHistory,
+  toEntries,
+  type HistoryEntry,
+} from "./history"
+import {
   BotsRpc,
   type BotInput,
   type BotPatch,
@@ -102,6 +110,8 @@ const MAX_MEMORY_TITLE = 120
 const MAX_MEMORY_CONTENT = 8_000
 const MAX_MEMORY_ENTRIES = 50
 const MAX_MEMORY_TOTAL = 40_000
+/** Session metadata key naming the bot whose cleared conversation the session holds. */
+const CLEARED_BOT = "botsClearedBot"
 const MAX_COMMAND_NAME = 32
 const MAX_SKILL_ID = 64
 const MAX_LIBRARY_DESCRIPTION = 2_000
@@ -727,13 +737,20 @@ const memorySection = (bot: StoredBot, owner: string) => [
 // `execute` tool's catalog (for example `tools.bots.memory`). Bots that are only told
 // "call bots_memory" look for a direct tool, find none, and give up.
 const TOOL_NOTE = [
-  "Bot tools: bots_send, bots_memory, bots_role, bots_skill, bots_command, bots_task, bots_job, bots_worker, and bots_create (coordinator only).",
+  "Bot tools: bots_send, bots_memory, bots_history, bots_role, bots_skill, bots_command, bots_task, bots_job, bots_worker, and bots_create (coordinator only).",
   "If they are not listed as direct tools, they are in the execute tool's catalog (for example `await tools.bots.memory({...})` inside execute). Search the catalog for them before concluding a tool is missing.",
 ]
 
 const FROM_BOT_RULES = [
   "- A message prefixed [From @handle] comes from another bot. Answer it directly and do not call bots_send for that message.",
   "- The other bot replies in its own session, and you receive its reply as the tool result.",
+]
+
+const HISTORY_RULES = [
+  "Conversation history:",
+  "- Earlier parts of this conversation may have been compacted into a summary, and cleared conversations are not in your context at all. bots_history searches all of your past conversation with the user, word for word.",
+  '- When the user refers to something said before that you cannot see in full ("last week", "remember when", "what did I say about"), search with bots_history before answering. Use a few distinctive words, try synonyms if nothing matches, and narrow by date with after/before. Then use "read" on a result to see the conversation around it.',
+  "- Answer only from what you found. If nothing matches, say so instead of guessing.",
 ]
 
 const LEARNING_RULES = [
@@ -863,6 +880,8 @@ const buildSystemPrompt = (bot: StoredBot, plan: PlanData) =>
     "- Only call bots_send when the user's current message includes a bot mention. Never call it on your own.",
     "- A scheduled job or task reminder counts as the current message: when its text mentions a bot with @handle, you may contact that bot.",
     ...FROM_BOT_RULES,
+    "",
+    ...HISTORY_RULES,
     "",
     ...LEARNING_RULES,
     "",
@@ -1102,6 +1121,9 @@ export default Plugin.define({
     })
 
     type Messages = Awaited<ReturnType<typeof ctx.session.context>>
+    type SessionListInput = NonNullable<Parameters<typeof ctx.session.list>[0]>
+    type SessionListCursor = NonNullable<SessionListInput["cursor"]>
+    type SessionListDirectory = NonNullable<SessionListInput["directory"]>
 
     /** The last non-empty assistant text created at or after `since`. */
     const replyText = (messages: Messages, since: number) =>
@@ -1682,6 +1704,58 @@ export default Plugin.define({
       }
     }
 
+    /**
+     * Sessions of a bot's cleared conversations: archived in the bot workspace
+     * and tagged with the bot's id. They stay searchable with bots_history until
+     * the bot is deleted.
+     */
+    const clearedSessions = async (botID: string) => {
+      const found = new Map<string, SessionInfo>()
+      // Both states: the user may unarchive a cleared conversation in Desktop.
+      for (const archived of [true, false]) {
+        let cursor: string | undefined
+        do {
+          const page = await ctx.session.list(
+            // The cursor carries the filters; the service rejects them alongside it.
+            cursor
+              ? { cursor: cursor as SessionListCursor, limit: 100 }
+              : { directory: workspace as SessionListDirectory, archived, limit: 100 },
+          )
+          for (const session of page.data) {
+            if (session.metadata?.[CLEARED_BOT] === botID) found.set(session.id, session)
+          }
+          cursor = page.cursor.next ?? undefined
+        } while (cursor)
+      }
+      return [...found.values()].sort((a, b) => a.time.created - b.time.created)
+    }
+
+    /**
+     * Ends the bot's current conversation without deleting it: stops a running
+     * reply, then archives the session with the bot's tag. A missing session is
+     * treated as already cleared.
+     */
+    const archiveConversation = async (bot: StoredBot) => {
+      const sessionID = bot.sessionID
+      if (!sessionID) return
+      try {
+        await ctx.session.interrupt({ sessionID, resume: false })
+        const session = await ctx.session.get({ sessionID })
+        await ctx.session.update({
+          sessionID,
+          title: `${bot.name} (cleared ${formatDay(Date.now(), timeZone)})`,
+          metadata: { ...session.metadata, [CLEARED_BOT]: bot.id },
+          archived: true,
+        })
+      } catch (error) {
+        if (isMissing(error)) return
+        console.error(`[opencode-bots] could not archive the session for ${bot.name}`, error)
+        throw new Error(
+          `Could not clear the conversation for ${bot.name}: its session was not archived, and the bot keeps using it.`,
+        )
+      }
+    }
+
     const enforceModel = async (sessionID: string) => {
       const target = store.model
       if (!target) return
@@ -1811,11 +1885,13 @@ export default Plugin.define({
       // sit in the execute catalog instead. Either way each bots_* tool rejects
       // a session that is not a bot or group, and bots_create a non-coordinator.
       if (!source || source.id !== store.coordinatorID) delete event.tools.bots_create
+      if (group) delete event.tools.bots_history
       if (bot || group) return
       for (const name of [
         "bots_send",
         "bots_skill",
         "bots_memory",
+        "bots_history",
         "bots_role",
         "bots_command",
         "bots_task",
@@ -2169,6 +2245,146 @@ export default Plugin.define({
       return {
         content: `Created skill "${id}" for ${source.name}. It is scoped only to this bot and will be available in the next model step.${files}`,
       }
+    }
+
+    /**
+     * Cleared conversations rarely change, so their messages are kept for the
+     * process, keyed by the session's last update, least recently used first,
+     * within a total size.
+     */
+    const clearedHistory = new Map<
+      string,
+      { updated: number; size: number; entries: HistoryEntry[] }
+    >()
+    const MAX_CLEARED_CACHE = 20_000_000
+
+    const cachedHistory = async (
+      session: SessionInfo,
+      read: (id: string) => Promise<HistoryEntry[]>,
+    ) => {
+      const hit = clearedHistory.get(session.id)
+      clearedHistory.delete(session.id)
+      if (hit && hit.updated === session.time.updated) {
+        clearedHistory.set(session.id, hit)
+        return hit.entries
+      }
+      const entries = await read(session.id)
+      // A reply still being written would be cached half done.
+      if (isBusy(session)) return entries
+      const size = entries.reduce((sum, entry) => sum + entry.text.length, 0)
+      clearedHistory.set(session.id, { updated: session.time.updated, size, entries })
+      let total = [...clearedHistory.values()].reduce((sum, item) => sum + item.size, 0)
+      for (const [id, item] of clearedHistory) {
+        if (total <= MAX_CLEARED_CACHE || id === session.id) break
+        clearedHistory.delete(id)
+        total -= item.size
+      }
+      return entries
+    }
+
+    /**
+     * Everything the bot and the user said, oldest first: its cleared
+     * conversations, then the current one. If the service can't be reached, the
+     * current conversation since its latest compaction is used instead.
+     */
+    const historyOf = async (bot: StoredBot) => {
+      const entries: HistoryEntry[] = []
+      const notes: string[] = []
+      // A session deleted in Desktop simply has no history left.
+      const read = async (id: string) => {
+        try {
+          return await fetchHistory(id)
+        } catch (error) {
+          if (isMissing(error)) return []
+          throw error
+        }
+      }
+      try {
+        for (const session of await clearedSessions(bot.id)) {
+          entries.push(...(await cachedHistory(session, read)))
+        }
+        if (bot.sessionID) entries.push(...(await read(bot.sessionID)))
+      } catch (error) {
+        if (!bot.sessionID) throw error
+        console.error(`[opencode-bots] could not read the full history of ${bot.name}`, error)
+        entries.length = 0
+        entries.push(
+          ...toEntries(bot.sessionID, await ctx.session.context({ sessionID: bot.sessionID })),
+        )
+        notes.push(
+          `Note: the full history could not be read (${messageOf(error)}), so only the current conversation since its latest compaction was searched.`,
+        )
+      }
+      return { entries, notes }
+    }
+
+    const manageHistory = async (source: StoredBot, sessionID: string, input: unknown) => {
+      const args = input as {
+        action?: unknown
+        query?: unknown
+        after?: unknown
+        before?: unknown
+        id?: unknown
+        bot?: unknown
+      }
+      const action = args.action === "read" ? "read" : args.action === "search" ? "search" : ""
+      if (!action) return { content: 'Error: action must be "search" or "read".' }
+
+      let bot = source
+      if (typeof args.bot === "string" && args.bot.trim()) {
+        const target = findBotByHandle(args.bot)
+        if (!target) {
+          const handles = store.bots.map((item) => `@${item.handle}`).join(", ")
+          return {
+            content: `Error: no bot has the handle ${args.bot}. Available bots: ${handles}.`,
+          }
+        }
+        if (target.id !== source.id && source.id !== store.coordinatorID) {
+          return { content: "Error: only the coordinator can search another bot's history." }
+        }
+        bot = target
+      }
+
+      const { entries, notes } = await historyOf(bot)
+      const speakers = { bot: bot.id === source.id ? `${bot.name} (you)` : bot.name }
+      const finish = (text: string) => ({ content: [...notes, text].join("\n\n") })
+
+      if (action === "read") {
+        const id = typeof args.id === "string" ? args.id.trim() : ""
+        if (!id)
+          return {
+            content: 'Error: id is required for "read": use a message id from a search result.',
+          }
+        return finish(readHistory(entries, id, speakers, timeZone))
+      }
+
+      const query = typeof args.query === "string" ? args.query : ""
+      const now = Date.now()
+      let after: number | undefined
+      let before: number | undefined
+      try {
+        if (typeof args.after === "string" && args.after.trim())
+          after = parseBound(args.after, "after", now, timeZone)
+        if (typeof args.before === "string" && args.before.trim())
+          before = parseBound(args.before, "before", now, timeZone)
+      } catch (error) {
+        return { content: errorText(error) }
+      }
+      // The message being answered and the reply in progress would match their
+      // own question, so a search from the current conversation stops before
+      // them: at the first message that started a run since this one began (it
+      // is stored a few milliseconds after the session turns busy), so a bot
+      // message queued later doesn't move the cut.
+      let searchable = entries
+      if (sessionID === bot.sessionID) {
+        const session = await ctx.session.get({ sessionID })
+        const isTrigger = (entry: HistoryEntry) => entry.sessionID === sessionID && entry.trigger
+        const started = isBusy(session) ? (session.time.busy ?? 0) - 1_000 : Infinity
+        let asked = entries.findIndex((entry) => isTrigger(entry) && entry.time >= started)
+        if (asked < 0) asked = entries.findLastIndex(isTrigger)
+        if (asked >= 0) searchable = entries.slice(0, asked)
+      }
+      return finish(searchHistory(searchable, { query, after, before }, speakers, timeZone))
     }
 
     const manageBotMemory = async (source: StoredBot, input: unknown) => {
@@ -3286,6 +3502,60 @@ export default Plugin.define({
       })
 
       editor.add({
+        name: "history",
+        options: { namespace: "bots" },
+        description:
+          "Search your past conversation with the user, word for word, including parts compacted out of your context and conversations the user cleared. Use it before answering when the user refers to something said earlier that you cannot see in full. search returns short excerpts of the best-matching messages with their ids and dates; read returns the messages around one id, so you can scroll back or forward by reading the first or last id shown. Answer only from what you find. Group chats are not included. Only the coordinator can search another bot's history, by passing bot.",
+        input: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["search", "read"],
+              description: "search to find messages; read to see the conversation around one.",
+            },
+            query: {
+              type: "string",
+              description:
+                'search: a few distinctive words. Messages with more of them rank first. Put "exact phrases" in quotes.',
+            },
+            after: {
+              type: "string",
+              description:
+                'search: only messages from this point on. A duration ago ("7d", "2w", "12h"), a local date or time ("2026-11-01", "2026-11-01 14:00"), or an ISO timestamp.',
+            },
+            before: {
+              type: "string",
+              description:
+                "search: only messages up to this point, in the same forms as after. A bare date includes that whole day.",
+            },
+            id: { type: "string", description: "read: a message id from a search or read result." },
+            bot: {
+              type: "string",
+              description:
+                "Coordinator only: the handle of the bot whose history to search. Defaults to you.",
+            },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        execute: async (input, context) => {
+          await refreshStore()
+          const { bot } = sourceFor(context.sessionID)
+          if (!bot)
+            return {
+              content: "Error: bots_history is only available in a bot's own chat, not in groups.",
+            }
+          try {
+            return await manageHistory(bot, context.sessionID, input)
+          } catch (error) {
+            console.error("[opencode-bots] bots_history failed", error)
+            return { content: errorText(error) }
+          }
+        },
+      })
+
+      editor.add({
         name: "role",
         options: { namespace: "bots" },
         description:
@@ -3661,8 +3931,13 @@ export default Plugin.define({
           )
         }
 
-        // Remove the OpenCode session first, exactly like deleting it in Desktop.
-        // If that fails, keep the bot so no orphan session is left behind.
+        // Remove the OpenCode sessions first, exactly like deleting them in
+        // Desktop: the current one and those of cleared conversations. If that
+        // fails, keep the bot so no orphan session is left behind.
+        for (const session of await clearedSessions(bot.id)) {
+          await removeSession(session.id, `${bot.name}'s cleared conversation`)
+          clearedHistory.delete(session.id)
+        }
         await removeSession(bot.sessionID, bot.name)
 
         store.bots = store.bots.filter((item) => item.id !== bot.id)
@@ -3695,10 +3970,9 @@ export default Plugin.define({
         const bot = findBot(data.id)
         if (!bot) throw new Error("Bot not found")
 
-        // Removing the session also interrupts a running turn, cancels its
-        // jobs, and deletes subagent children. Keep pointing at the old
-        // session if that fails, as deleting a bot does.
-        await removeSession(bot.sessionID, bot.name)
+        // The old session is archived, not deleted, so bots_history can still
+        // search it. Keep pointing at it if that fails.
+        await archiveConversation(bot)
         bot.sessionID = ""
         bot.updatedAt = Date.now()
         await save()
