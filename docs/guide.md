@@ -78,9 +78,13 @@ so you can open them in Desktop too.
   Hex is busy with another stream, the recording is sent whole when you stop
   instead, with no live text; clips over 30 seconds then make Hex load a second
   copy of its model for a while. Recordings stop at 10 minutes and are never
-  saved. The text is what was heard, without Hex's Output processing
-  (corrections, transformations, rewriting). The microphone is hidden if Hex
-  has never run on that computer.
+  saved. With **Labs › Process API transcripts** on in Hex (Hex 3.4 or later),
+  the text gets your Global mode's Output processing, as a paste would:
+  replacements, corrections, rewriting, and transformations. The live text
+  shows the words as heard, and the processed text replaces it when you stop.
+  With the lab off, or while Hex is processing another request, you get the
+  words as heard. The microphone is hidden if Hex has never run on that
+  computer.
 - **Deleting a bot** deletes its OpenCode session and the sessions of its
   cleared conversations, as in Desktop. If that fails, the bot is kept so no
   session is orphaned. A bot that hosts a group can't be

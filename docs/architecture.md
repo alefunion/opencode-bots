@@ -110,6 +110,14 @@ stream at a time) or a stream breaks, it sends the whole clip as a WAV instead.
 `GET /api/transcribe` reports whether Hex is installed and answering, which
 decides whether the composer shows the microphone.
 
+Both `/streams/{id}/finish` and `/transcriptions` are sent with
+`process=global`, which asks for Hex's Global-mode Output processing (Labs ›
+Process API transcripts); its `processed` field is used when present. Hex
+refuses the parameter before reading the audio or finishing the stream
+(`403 processing-disabled`, `409 processing-unavailable`, `429 queue-full`), so
+on those codes the web app sends the request again without it and uses the
+raw text.
+
 The tunnel reuses the OpenTunnel identity OpenCode itself pairs with (profile
 `default`) and claims its own `bots` route, so the address is stable across
 restarts. If the profile has no identity yet, the first connect creates one

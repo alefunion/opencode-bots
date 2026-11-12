@@ -139,20 +139,45 @@ const REFUSALS: Record<string, string> = {
   "model-not-ready": "Hex's model isn't ready. Open Hex and try again.",
 }
 
+/**
+ * `process=global` asks Hex for the text after its Global mode's Output
+ * processing (replacements, corrections, rewrite, transformations), behind
+ * Labs › Process API transcripts. Hex refuses it before reading the audio or
+ * finishing the stream, so on these codes the request is sent again without it
+ * and the raw text is used.
+ */
+const PROCESSING_REFUSALS = new Set(["processing-disabled", "processing-unavailable", "queue-full"])
+
+type HexBody = Record<string, unknown> & { code?: unknown }
+
+async function processed(
+  send: (process: boolean) => Promise<Response>,
+): Promise<{ response: Response; body: HexBody }> {
+  let response = await send(true)
+  let body = (await response.json().catch(() => ({}))) as HexBody
+  if (!response.ok && typeof body.code === "string" && PROCESSING_REFUSALS.has(body.code)) {
+    response = await send(false)
+    body = (await response.json().catch(() => ({}))) as HexBody
+  }
+  return { response, body }
+}
+
+/** Hex's processed text when it sent one, else the raw transcript. */
+const finalText = (body: HexBody, raw: string) =>
+  (typeof body.processed === "string" ? body.processed : raw).trim()
+
 export async function transcribe(wav: ArrayBuffer): Promise<{ text: string; durationMs: number }> {
   const hex = await discover()
   const model = await dictationModel(hex)
-  const query = new URLSearchParams({ model: model.id, language: model.language })
-  const response = await call(hex, `/transcriptions?${query}`, {
-    method: "POST",
-    headers: { "content-type": "audio/wav" },
-    body: wav,
+  const { response, body } = await processed((process) => {
+    const query = new URLSearchParams({ model: model.id, language: model.language })
+    if (process) query.set("process", "global")
+    return call(hex, `/transcriptions?${query}`, {
+      method: "POST",
+      headers: { "content-type": "audio/wav" },
+      body: wav,
+    })
   })
-  const body = (await response.json().catch(() => ({}))) as {
-    transcript?: unknown
-    durationMs?: unknown
-    code?: unknown
-  }
   if (!response.ok || typeof body.transcript !== "string") {
     const code = typeof body.code === "string" ? body.code : ""
     throw new HexError(
@@ -161,7 +186,7 @@ export async function transcribe(wav: ArrayBuffer): Promise<{ text: string; dura
     )
   }
   return {
-    text: body.transcript.trim(),
+    text: finalText(body, body.transcript),
     durationMs: typeof body.durationMs === "number" ? body.durationMs : 0,
   }
 }
@@ -250,15 +275,12 @@ export async function streamEvents(id: string, signal: AbortSignal): Promise<Res
 
 export async function finishStream(id: string): Promise<{ text: string; durationMs: number }> {
   try {
-    const response = await streamCall(id, "finish", { method: "POST" })
-    const body = (await response.json().catch(() => ({}))) as {
-      text?: unknown
-      durationMs?: unknown
-      code?: unknown
-    }
+    const { response, body } = await processed((process) =>
+      streamCall(id, process ? "finish?process=global" : "finish", { method: "POST" }),
+    )
     if (!response.ok || typeof body.text !== "string") throw streamError(response.status, body)
     return {
-      text: body.text.trim(),
+      text: finalText(body, body.text),
       durationMs: typeof body.durationMs === "number" ? body.durationMs : 0,
     }
   } finally {
